@@ -46,7 +46,8 @@ extern STATUS setsockopt
 BOOL Ros_Controller_Init(Controller* controller);
 BOOL Ros_Controller_WaitInitReady(Controller* controller);
 BOOL Ros_Controller_IsValidGroupNo(Controller* controller, int groupNo);
-int Ros_Controller_OpenSocket(int tcpPort);
+int Ros_Controller_OpenTcpSocket(int tcpPort);
+int Ros_Controller_OpenUdpSocket(int tcpPort);
 void Ros_Controller_ConnectionServer_Start(Controller* controller);
 // Status related
 void Ros_Controller_StatusInit(Controller* controller);
@@ -264,11 +265,11 @@ BOOL Ros_Controller_IsValidGroupNo(Controller* controller, int groupNo)
 
 
 //-------------------------------------------------------------------
-// Open a socket to listen for incomming connection on specified port
+// Open a tcp socket to listen for incoming connection on specified port
 // return: <0  : Error
 // 		   >=0 : socket descriptor
 //-------------------------------------------------------------------
-int Ros_Controller_OpenSocket(int tcpPort)
+int Ros_Controller_OpenTcpSocket(int tcpPort)
 {
 	int sd;  // socket descriptor
 	struct sockaddr_in	serverSockAddr;
@@ -298,7 +299,45 @@ int Ros_Controller_OpenSocket(int tcpPort)
 	return sd;
 
 closeSockHandle:
-	printf("Error in Ros_Controller_OpenSocket\r\n");
+	printf("Error in Ros_Controller_OpenTcpSocket\r\n");
+
+	if(sd >= 0)
+		mpClose(sd);
+
+	return -2;
+}
+
+//-------------------------------------------------------------------
+// Open a udp socket to listen for incoming connection on specified port
+// return: <0  : Error
+// 		     >=0 : socket descriptor
+//-------------------------------------------------------------------
+int Ros_Controller_OpenUdpSocket(int tcpPort)
+{
+	int sd;  // socket descriptor
+	struct sockaddr_in	serverSockAddr;
+	int ret;
+
+	// Open the socket
+	sd = mpSocket(AF_INET, SOCK_DGRAM, 0);
+	if (sd < 0)
+		return -1;
+
+	// Set structure
+	memset(&serverSockAddr, 0, sizeof(struct sockaddr_in));
+	serverSockAddr.sin_family = AF_INET;
+	serverSockAddr.sin_addr.s_addr = INADDR_ANY;
+	serverSockAddr.sin_port = mpHtons(tcpPort);
+
+	//bind to network interface
+	ret = mpBind(sd, (struct sockaddr *)&serverSockAddr, sizeof(struct sockaddr_in)); 
+	if (ret < 0)
+		goto closeSockHandle;
+
+	return sd;
+
+closeSockHandle:
+	printf("Error in Ros_Controller_OpenTcpSocket\r\n");
 
 	if(sd >= 0)
 		mpClose(sd);
@@ -312,109 +351,141 @@ closeSockHandle:
 //-----------------------------------------------------------------------
 void Ros_Controller_ConnectionServer_Start(Controller* controller)
 {
-	int     sdMotionServer = INVALID_SOCKET;
-	int     sdStateServer = INVALID_SOCKET;
-	int     sdIoServer = INVALID_SOCKET;
-	int		sdMax;
-	struct  fd_set  fds;
-	int     sdAccepted = INVALID_SOCKET;
-	struct  sockaddr_in     clientSockAddr;
-	int     sizeofSockAddr;
-	int     useNoDelay = 1;
-	STATUS  s;
+  int     sdMotionServer = INVALID_SOCKET;
+  int     sdStateServer = INVALID_SOCKET;
+  int     sdIoServer = INVALID_SOCKET;
+  int     sdRealTimeMotionServer = INVALID_SOCKET;
+  int		sdMax;
+  struct  fd_set  fds;
+  int     sdAccepted = INVALID_SOCKET;
+  struct  sockaddr_in     clientSockAddr;
+  int     sizeofSockAddr;
+  int     useNoDelay = 1;
+  STATUS  s;
 
-	//Set feedback signal (Application is installed and running)
-	Ros_Controller_SetIOState(IO_FEEDBACK_CONNECTSERVERRUNNING, TRUE);
+  //Set feedback signal (Application is installed and running)
+  Ros_Controller_SetIOState(IO_FEEDBACK_CONNECTSERVERRUNNING, TRUE);
 
-	printf("Controller connection server running\r\n");
+  printf("Controller connection server running\r\n");
 
-	//New sockets for server listening to multiple port
-	sdMotionServer = Ros_Controller_OpenSocket(TCP_PORT_MOTION);
-	if(sdMotionServer < 0)
-		goto closeSockHandle;
-	
-	sdStateServer = Ros_Controller_OpenSocket(TCP_PORT_STATE);
-	if(sdStateServer < 0)
-		goto closeSockHandle;
-	
-	sdIoServer = Ros_Controller_OpenSocket(TCP_PORT_IO);
-	if(sdIoServer < 0)
-		goto closeSockHandle;
+  //New sockets for server listening to multiple port
+  sdMotionServer = Ros_Controller_OpenTcpSocket(TCP_PORT_MOTION);
+  if (sdMotionServer < 0)
+  {
+    goto closeSockHandle;
+  }
 
-	sdMax = max(sdMotionServer, sdStateServer);
-	sdMax = max(sdMax, sdIoServer);
+  sdStateServer = Ros_Controller_OpenTcpSocket(TCP_PORT_STATE);
+  if (sdStateServer < 0)
+  {
+    goto closeSockHandle;
+  }
 
-	FOREVER //Continue to accept multiple connections forever
-	{
-		FD_ZERO(&fds);
-		FD_SET(sdMotionServer, &fds); 
-		FD_SET(sdStateServer, &fds); 
-		FD_SET(sdIoServer, &fds); 
-		
-		if(mpSelect(sdMax+1, &fds, NULL, NULL, NULL) > 0)
-		{
-			memset(&clientSockAddr, 0, sizeof(clientSockAddr));
-			sizeofSockAddr = sizeof(clientSockAddr);
-			
-			//Check motion server
-			if(FD_ISSET(sdMotionServer, &fds))
-			{
-				sdAccepted = mpAccept(sdMotionServer, (struct sockaddr *)&clientSockAddr, &sizeofSockAddr);
-				if (sdAccepted < 0)
-					break;
-					
-				s = setsockopt(sdAccepted, IPPROTO_TCP, TCP_NODELAY, (char*)&useNoDelay, sizeof (int));
-				if( OK != s )
-				{
-					printf("Failed to set TCP_NODELAY.\r\n");
-				}
-				
-				Ros_MotionServer_StartNewConnection(controller, sdAccepted);
-			}
-			
-			//Check state server
-			if(FD_ISSET(sdStateServer, &fds))
-			{
-				sdAccepted = mpAccept(sdStateServer, (struct sockaddr *)&clientSockAddr, &sizeofSockAddr);
-				if (sdAccepted < 0)
-					break;
-					
-				s = setsockopt(sdAccepted, IPPROTO_TCP, TCP_NODELAY, (char*)&useNoDelay, sizeof (int));
-				if( OK != s )
-				{
-					printf("Failed to set TCP_NODELAY.\r\n");
-				}
-				
-				Ros_StateServer_StartNewConnection(controller, sdAccepted);
-			}
-			
-			//Check IO server
-			if(FD_ISSET(sdIoServer, &fds))
-			{
-				sdAccepted = mpAccept(sdIoServer, (struct sockaddr *)&clientSockAddr, &sizeofSockAddr);
-				if (sdAccepted < 0)
-					break;
-					
-				s = setsockopt(sdAccepted, IPPROTO_TCP, TCP_NODELAY, (char*)&useNoDelay, sizeof (int));
-				if( OK != s )
-				{
-					printf("Failed to set TCP_NODELAY.\r\n");
-				}
-				
-				Ros_IoServer_StartNewConnection(controller, sdAccepted);
-			}
-		}
-	}
-	
-closeSockHandle:
-	printf("Error!?... Connection Server is aborting.  Reboot the controller.\r\n");
+  sdIoServer = Ros_Controller_OpenTcpSocket(TCP_PORT_IO);
+  if (sdIoServer < 0)
+  {
+    goto closeSockHandle;
+  }
 
-	if(sdIoServer >= 0)
-		mpClose(sdIoServer);
-	if(sdMotionServer >= 0)
-		mpClose(sdMotionServer);
-	if(sdStateServer >= 0)
-		mpClose(sdStateServer);
+  sdRealTimeMotionServer = Ros_Controller_OpenUdpSocket(UDP_PORT_REALTIME_MOTION);
+  if (sdRealTimeMotionServer < 0)
+  {
+    goto closeSockHandle;
+  }
+
+  sdMax = max(sdMotionServer, sdStateServer);
+  sdMax = max(sdMax, sdIoServer);
+  sdMax = max(sdMax, sdRealTimeMotionServer);
+
+  FOREVER //Continue to accept multiple connections forever
+  {
+    FD_ZERO(&fds);
+    FD_SET(sdMotionServer, &fds);
+    FD_SET(sdStateServer, &fds);
+    FD_SET(sdIoServer, &fds);
+    FD_SET(sdRealTimeMotionServer, &fds);
+
+    if (mpSelect(sdMax + 1, &fds, NULL, NULL, NULL) > 0)
+    {
+      memset(&clientSockAddr, 0, sizeof(clientSockAddr));
+      sizeofSockAddr = sizeof(clientSockAddr);
+
+      // Check motion server
+      if (FD_ISSET(sdMotionServer, &fds))
+      {
+        sdAccepted = mpAccept(sdMotionServer, (struct sockaddr *)&clientSockAddr, &sizeofSockAddr);
+        if (sdAccepted < 0)
+          break;
+
+        s = setsockopt(sdAccepted, IPPROTO_TCP, TCP_NODELAY, (char*)&useNoDelay, sizeof(int));
+        if (OK != s)
+        {
+          printf("Failed to set TCP_NODELAY.\r\n");
+        }
+
+        Ros_MotionServer_StartNewConnection(controller, sdAccepted);
+      }
+
+      // Check state server
+      if (FD_ISSET(sdStateServer, &fds))
+      {
+        sdAccepted = mpAccept(sdStateServer, (struct sockaddr *)&clientSockAddr, &sizeofSockAddr);
+        if (sdAccepted < 0)
+          break;
+
+        s = setsockopt(sdAccepted, IPPROTO_TCP, TCP_NODELAY, (char*)&useNoDelay, sizeof(int));
+        if (OK != s)
+        {
+          printf("Failed to set TCP_NODELAY.\r\n");
+        }
+
+        Ros_StateServer_StartNewConnection(controller, sdAccepted);
+      }
+
+      // Check IO server
+      if (FD_ISSET(sdIoServer, &fds))
+      {
+        sdAccepted = mpAccept(sdIoServer, (struct sockaddr *)&clientSockAddr, &sizeofSockAddr);
+        if (sdAccepted < 0)
+          break;
+
+        s = setsockopt(sdAccepted, IPPROTO_TCP, TCP_NODELAY, (char*)&useNoDelay, sizeof(int));
+        if (OK != s)
+        {
+          printf("Failed to set TCP_NODELAY.\r\n");
+        }
+
+        Ros_IoServer_StartNewConnection(controller, sdAccepted);
+      }
+
+      // Check Real-Time Motion Server
+      if (FD_ISSET(sdRealTimeMotionServer, &fds))
+      {
+        // TODO(Lars): Maybe do some hand-shaking here?
+        Ros_RealTimeMotionServer_Start(controller, sdRealTimeMotionServer);
+      }
+    }
+  }
+
+  closeSockHandle:
+  printf("Error!?... Connection Server is aborting.  Reboot the controller.\r\n");
+
+  if (sdIoServer >= 0)
+  {
+    mpClose(sdIoServer);
+  }
+  if (sdMotionServer >= 0)
+  {
+    mpClose(sdMotionServer);
+  }
+  if (sdStateServer >= 0)
+  {
+    mpClose(sdStateServer);
+  }
+  if (sdRealTimeMotionServer >= 0)
+  {
+    mpClose(sdRealTimeMotionServer);
+  }
 
 	//disable feedback signal
 	Ros_Controller_SetIOState(IO_FEEDBACK_CONNECTSERVERRUNNING, FALSE);

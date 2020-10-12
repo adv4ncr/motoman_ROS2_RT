@@ -181,6 +181,7 @@
     <ClCompile Include="IoServer.c" />
     <ClCompile Include="MotionServer.c" />
     <ClCompile Include="mpMain.c" />
+    <ClCompile Include="RealTimeMotionServer.c" />
     <ClCompile Include="SimpleMessage.c" />
     <ClCompile Include="StateServer.c" />
   </ItemGroup>
@@ -192,6 +193,7 @@
     <ClInclude Include="MotoROS.h" />
     <ClInclude Include="ParameterExtraction.h" />
     <ClInclude Include="ParameterTypes.h" />
+    <ClInclude Include="RealTimeMotionServer.h" />
     <ClInclude Include="SimpleMessage.h" />
     <ClInclude Include="StateServer.h" />
   </ItemGroup>
