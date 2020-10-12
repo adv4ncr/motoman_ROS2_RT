@@ -133,20 +133,21 @@ void Ros_RealTimeMotionServer_IncMoveLoopStart(Controller* controller) //<-- IP_
 
   int timeoutCounter = 0;
 
+  memset(buffer, CLEAR, sizeof(buffer));
+  // Read velocity command from socket
+  bytesRecv = mpRecvFrom(controller->sdMotionConnections[0], 
+    buffer, REALTIME_MOTION_BUFFER_SIZE_MAX, 0, 
+    (struct sockaddr *)&clientSockAddr, &sizeofSockAddr);
+  if (bytesRecv < 0)
+  {
+    printf("RealTimeMotionServer: break ");
+  }
 
   FOREVER
   {
     mpClkAnnounce(MP_INTERPOLATION_CLK);
 
-    memset(buffer, CLEAR, sizeof(buffer));
-    // Read velocity command from socket
-    bytesRecv = mpRecvFrom(controller->sdMotionConnections[0], 
-      buffer, REALTIME_MOTION_BUFFER_SIZE_MAX, 0, 
-      (struct sockaddr *)&clientSockAddr, &sizeofSockAddr);
-    if (bytesRecv < 0)
-    {
-      break;
-    }
+
 
 
    // fd_set fds;
