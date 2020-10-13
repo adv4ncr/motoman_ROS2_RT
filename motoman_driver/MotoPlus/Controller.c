@@ -387,7 +387,7 @@ void Ros_Controller_ConnectionServer_Start(Controller* controller)
     goto closeSockHandle;
   }
 
-  sdRealTimeMotionServer = Ros_Controller_OpenUdpSocket(UDP_PORT_REALTIME_MOTION);
+  sdRealTimeMotionServer = Ros_Controller_OpenTcpSocket(TCP_PORT_REALTIME_MOTION);
   if (sdRealTimeMotionServer < 0)
   {
     goto closeSockHandle;
@@ -461,8 +461,17 @@ void Ros_Controller_ConnectionServer_Start(Controller* controller)
       // Check Real-Time Motion Server
       if (FD_ISSET(sdRealTimeMotionServer, &fds))
       {
-        // TODO(Lars): Maybe do some hand-shaking here?
-        Ros_RealTimeMotionServer_Start(controller, sdRealTimeMotionServer);
+        sdAccepted = mpAccept(sdRealTimeMotionServer, (struct sockaddr *)&clientSockAddr, &sizeofSockAddr);
+        if (sdAccepted < 0)
+          break;
+
+        s = setsockopt(sdAccepted, IPPROTO_TCP, TCP_NODELAY, (char*)&useNoDelay, sizeof(int));
+        if (OK != s)
+        {
+          printf("Failed to set TCP_NODELAY.\r\n");
+        }
+
+        Ros_RealTimeMotionServer_StartNewConnection(controller, sdAccepted);
       }
     }
   }
