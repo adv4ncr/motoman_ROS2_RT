@@ -47,6 +47,11 @@ void Ros_RealTimeMotionServer_WaitForSimpleMsg(Controller* controller,
 // IncMove task
 void Ros_RealTimeMotionServer_IncMoveLoopStart(Controller* controller);
 
+// Simple messages
+int Ros_RealTimeMotionServer_SimpleMsg_State(SimpleMsg* stateMsg,
+                                             CtrlGroup* ctrlGroup,
+                                             int sequence);
+
 //-----------------------
 // Function implementation
 //-----------------------
@@ -156,99 +161,119 @@ void Ros_RealTimeMotionServer_WaitForSimpleMsg(Controller* controller,
 void Ros_RealTimeMotionServer_IncMoveLoopStart(
     Controller* controller)  //<-- IP_CLK priority task
 {
-  int groupNo;
-  SimpleMsg sendMsg;
-  SimpleMsg sendMsgFEx;
-  int msgSize, fexMsgSize = 0;
-  BOOL bSuccesfulSend;
+  int groupNo = 0;
+  float interpolPeriodSec = (float)controller->interpolPeriod * 0.001;
 
+  // State and command messages
+  SimpleMsg stateMsg;
+  SimpleMsg commandMsg;
+  int msgSize = 0;
+
+  // UDP client socket
   int sd;
-  struct sockaddr_in serverSockAddr;
-  int sizeofSockAddr = sizeof(serverSockAddr);
-  int ret;
   sd = mpSocket(AF_INET, SOCK_DGRAM, 0);
   if (sd < 0) {
     return;
   }
 
-  // Set structure
+  // Set up UDP server structure
+  struct sockaddr_in serverSockAddr;
+  int sizeofSockAddr = sizeof(serverSockAddr);
   memset(&serverSockAddr, CLEAR, sizeof(struct sockaddr_in));
   serverSockAddr.sin_family = AF_INET;
-  // TODO(Lars): Get the external server address from the TCP socket? Or set as
-  // a variable in the job?
-  serverSockAddr.sin_addr.s_addr = mpInetAddr("192.168.255.3");
-  serverSockAddr.sin_port = mpHtons(50244);
+  serverSockAddr.sin_addr.s_addr =
+      mpInetAddr("192.168.255.3");  // IP should really not be hardcoded here
+  serverSockAddr.sin_port = mpHtons(REALTIME_MOTION_UDP_PORT);
 
+  // Permanently specifies the server 
   mpConnect(sd, &serverSockAddr, sizeofSockAddr);
 
-  char buffer[REALTIME_MOTION_BUFFER_SIZE_MAX];
-  memset(buffer, CLEAR, sizeof(buffer));
   int bytesRecv;
   int bytesSend;
 
   // Timeout counter for late packages from external control client
   int timeoutCounter = 0;
-  // Timeout read at 4 ms
 
-  // Command
-  MP_EXPOS_DATA moveData;
-  memset(&moveData, CLEAR, sizeof(MP_EXPOS_DATA));
-  // R1: Robot 1. TODO(Lars): Add control of additional groups
-  moveData.ctrl_grp = 1;
-  // Control all six axes: 0x3f = 00111111
-  moveData.grp_pos_info[0].pos_tag.data[0] = 0x3f;
-  // Control with pulse increments
-  moveData.grp_pos_info[0].pos_tag.data[3] = MP_INC_PULSE_DTYPE;
-
-  LONG status;
+  // Message id (sequence) that is incremented in each iteration
+  int sequence = 0;
 
   printf("Starting Real Time Motion Server task\r\n");
   printf("Starting control loop with cycle time: %u ms\n",
          controller->interpolPeriod);
 
+  // Command
+  MP_EXPOS_DATA moveData;
+  memset(&moveData, CLEAR, sizeof(MP_EXPOS_DATA));
+  moveData.ctrl_grp |= (0x01 << groupNo);
+  moveData.grp_pos_info[groupNo].pos_tag.data[0] =
+      Ros_CtrlGroup_GetAxisConfig(controller->ctrlGroups[groupNo]);
+  // Control with pulse increments
+  moveData.grp_pos_info[0].pos_tag.data[3] = MP_INC_PULSE_DTYPE;
+
   while (timeoutCounter < REALTIME_MOTION_TIMEOUT_COUNTER_MAX) {
+    // Sync with the interpolation clock
     mpClkAnnounce(MP_INTERPOLATION_CLK);
 
-    groupNo = 0;  // R1
-    msgSize =
-        Ros_SimpleMsg_JointFeedback(controller->ctrlGroups[groupNo], &sendMsg);
+    // Populate state message and send to server
+    memset(&stateMsg, CLEAR, sizeof(SimpleMsg));
+    msgSize = Ros_RealTimeMotionServer_SimpleMsg_State(
+        &stateMsg, controller->ctrlGroups[groupNo], sequence);
     if (msgSize > 0) {
-      memset(buffer, 0, sizeof(buffer));
-      memcpy(&buffer, &sendMsg, msgSize);
-      bytesSend = mpSend(sd, buffer, msgSize, 0);
+      bytesSend = mpSend(sd, (char*)&stateMsg, sizeof(SimpleMsg), 0);
     }
 
-    // Read command from socket with timeout
+    // Define read timeout
     struct timeval tv;
     tv.tv_sec = 0;
-    tv.tv_usec = 4000;
+    tv.tv_usec = REALTIME_MOTION_TIMEOUT_MS * 1000;
+
+    // Recieve command message with timeout
     struct fd_set readFds;
     FD_ZERO(&readFds);
     FD_SET(sd, &readFds);
     if (mpSelect(sd + 1, &readFds, NULL, NULL, &tv) > 0) {
-      // Read velocity command from socket
-      memset(buffer, CLEAR, sizeof(buffer));
-      bytesRecv = mpRecv(sd, buffer, REALTIME_MOTION_BUFFER_SIZE_MAX, 0);
+      memset(&commandMsg, CLEAR, sizeof(SimpleMsg));
+      bytesRecv = mpRecv(sd, (char*)&commandMsg, sizeof(SimpleMsg), 0);
       if (bytesRecv < 0) {
-        printf("RealTimeMotionServer: bytesRecv < 0\n");
+        break;
       }
 
-      buffer[REALTIME_MOTION_BUFFER_SIZE_MAX] = '\n';
-      printf(buffer);
+      // The received sequence number should match the state sequence number
+      // sent in the same cycle
+      if (stateMsg.body.motionReply.sequence ==
+          commandMsg.body.motionReply.sequence) {
+        // Integrate rad/s -> rad for this cycle
+        int i;
+        for (i = 0; i < MAX_PULSE_AXES; i++) {
+          commandMsg.body.motionCtrl.data[i] *= interpolPeriodSec;
+        }
 
-      // if(Ros_Controller_IsMotionReady(controller)
-      //   && !controller->bStopMotion)
-      // {
-      //
-      //   ret = mpExRcsIncrementMove(&moveData);
-      // if(ret != 0)
-      //{
-      //	if(ret == -3)
-      //		printf("mpExRcsIncrementMove returned: %d (ctrl_grp =
-      //%d)\r\n", ret, moveData.ctrl_grp); 	else
-      // printf("mpExRcsIncrementMove returned: %d\r\n", ret);
-      //}
-      // }
+        // Convert from rad to pulse
+        Ros_CtrlGroup_ConvertToMotoPos(controller->ctrlGroups[groupNo],
+                                       commandMsg.body.motionCtrl.data,
+                                       moveData.grp_pos_info[groupNo].pos);
+
+      } else {
+        // Stop motion if sequence numbers do not match
+        memset(&moveData.grp_pos_info[groupNo].pos, CLEAR,
+               sizeof(LONG) * MP_GRP_AXES_NUM);
+      }
+
+      if (Ros_Controller_IsMotionReady(controller) &&
+          !controller->bStopMotion) {
+        int ret = mpExRcsIncrementMove(&moveData);
+        if (ret != 0) {
+          if (ret == -3) {
+            printf("mpExRcsIncrementMove returned: %d (ctrl_grp = % d)\r\n",
+                   ret, moveData.ctrl_grp);
+          } else {
+            printf("mpExRcsIncrementMove returned: %d\r\n", ret);
+          }
+        }
+      }
+
+      // Increment sequence number
+      sequence++;
 
     } else {
       timeoutCounter++;
@@ -260,5 +285,36 @@ void Ros_RealTimeMotionServer_IncMoveLoopStart(
   }
 
   puts("Deleting RealTimeMotion server inc task");
+
+  mpClose(sd);
   mpDeleteSelf;
+}
+
+int Ros_RealTimeMotionServer_SimpleMsg_State(SimpleMsg* stateMsg,
+                                             CtrlGroup* ctrlGroup,
+                                             int sequence) {
+  // Initialize memory
+  memset(stateMsg, CLEAR, sizeof(SimpleMsg));
+
+  // Set prefix: Length of message excluding the prefix
+  stateMsg->prefix.length = sizeof(SmHeader) + sizeof(SmBodyMotoMotionReply);
+
+  // Set the information of the reply
+  stateMsg->header.msgType = ROS_MSG_MOTO_MOTION_REPLY;
+  stateMsg->header.commType = ROS_COMM_TOPIC;
+  stateMsg->header.replyType = ROS_REPLY_INVALID;
+
+  stateMsg->body.motionReply.groupNo = ctrlGroup->groupNo;
+  stateMsg->body.motionReply.sequence = sequence;
+
+  long pulsePos[MAX_PULSE_AXES];
+  int bRet = Ros_CtrlGroup_GetFBPulsePos(ctrlGroup, pulsePos);
+  if (bRet != TRUE) {
+    return 0;
+  }
+
+  Ros_CtrlGroup_ConvertToRosPos(ctrlGroup, pulsePos,
+                                stateMsg->body.motionReply.data);
+
+  return stateMsg->prefix.length + sizeof(SmPrefix);
 }

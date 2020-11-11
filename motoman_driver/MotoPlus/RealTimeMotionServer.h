@@ -34,6 +34,8 @@
 
 #define REALTIME_MOTION_BUFFER_SIZE_MAX  1024
 #define REALTIME_MOTION_TIMEOUT_COUNTER_MAX 20
+#define REALTIME_MOTION_TIMEOUT_MS 4 // in milliseconds
+#define REALTIME_MOTION_UDP_PORT 50244
 
 extern void Ros_RealTimeMotionServer_StartNewConnection(Controller* controller, int sd);
 
