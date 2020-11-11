@@ -220,12 +220,12 @@ void Ros_RealTimeMotionServer_IncMoveLoopStart(
 
     // Read command from socket with timeout
     struct timeval tv;
-    tv.tv_sec = 2;
-    tv.tv_usec = 0;
+    tv.tv_sec = 0;
+    tv.tv_usec = 4000;
     struct fd_set readFds;
     FD_ZERO(&readFds);
     FD_SET(sd, &readFds);
-    if (mpSelect(sd + 1, &readFds, NULL, NULL, &tv) < 0) {
+    if (mpSelect(sd + 1, &readFds, NULL, NULL, &tv) > 0) {
       // Read velocity command from socket
       memset(buffer, CLEAR, sizeof(buffer));
       bytesRecv = mpRecv(sd, buffer, REALTIME_MOTION_BUFFER_SIZE_MAX, 0);
