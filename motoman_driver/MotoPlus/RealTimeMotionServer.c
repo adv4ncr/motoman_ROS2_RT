@@ -185,7 +185,7 @@ void Ros_RealTimeMotionServer_IncMoveLoopStart(
       mpInetAddr("192.168.255.3");  // IP should really not be hardcoded here
   serverSockAddr.sin_port = mpHtons(REALTIME_MOTION_UDP_PORT);
 
-  // Permanently specifies the server 
+  // Permanently specifies the server
   mpConnect(sd, &serverSockAddr, sizeofSockAddr);
 
   int bytesRecv;
@@ -238,15 +238,19 @@ void Ros_RealTimeMotionServer_IncMoveLoopStart(
         break;
       }
 
+      SmBodyMotoMotionCtrl* motionCtrl;
+      motionCtrl = &commandMsg.body.motionCtrl;
+
       // The received sequence number should match the state sequence number
       // sent in the same cycle
-      if (stateMsg.body.motionReply.sequence ==
-          commandMsg.body.motionReply.sequence) {
+      if (stateMsg.body.motionReply.sequence == motionCtrl->sequence) {
         // Integrate rad/s -> rad for this cycle
         int i;
         for (i = 0; i < MAX_PULSE_AXES; i++) {
-          commandMsg.body.motionCtrl.data[i] *= interpolPeriodSec;
+          motionCtrl->data[i] *= interpolPeriodSec;
         }
+
+        printf("Sequence: %d\n", motionCtrl->sequence);
 
         // Convert from rad to pulse
         Ros_CtrlGroup_ConvertToMotoPos(controller->ctrlGroups[groupNo],
