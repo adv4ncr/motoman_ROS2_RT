@@ -103,9 +103,12 @@ typedef enum
 	ROS_CMD_START_SERVOS = 200112, // starts the servo motors
 	ROS_CMD_STOP_SERVOS = 200113, // stops the servo motors and motion
 	ROS_CMD_RESET_ALARM = 200114, // clears the error in the current controller
-	ROS_CMD_START_TRAJ_MODE = 200121,
-	ROS_CMD_STOP_TRAJ_MODE = 200122,
-	ROS_CMD_DISCONNECT = 200130
+	ROS_CMD_START_TRAJ_MODE = 200121, // Enable robot motion
+	ROS_CMD_STOP_TRAJ_MODE = 200122, // Disable robot motion
+	ROS_CMD_DISCONNECT = 200130,
+  ROS_CMD_START_RT_MODE = 200140, // Start real-time mode
+  ROS_CMD_STOP_RT_MODE = 200141, // Stop real-time mode
+  ROS_CMD_CHECK_TIMEOUT_CNT = 200142, // Check the number of late packages in RT mode
 } SmCommandType;
 
 
