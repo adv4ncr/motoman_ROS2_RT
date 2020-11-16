@@ -74,7 +74,11 @@ typedef enum
 	ROS_MSG_MOTO_JOINT_FEEDBACK_EX = 2017,
 	ROS_MSG_MOTO_SELECT_TOOL = 2018,
 
-	ROS_MSG_MOTO_GET_DH_PARAMETERS = 2020
+	ROS_MSG_MOTO_GET_DH_PARAMETERS = 2020,
+
+  ROS_MSG_MOTO_REALTIME_MOTION_JOINT_STATE_EX = 2030,
+  ROS_MSG_MOTO_REALTIME_MOTION_JOINT_COMMAND_EX = 2031,
+
 } SmMsgType;
 
 
@@ -349,6 +353,50 @@ struct _SmBodyMotoGetDhParameters
 typedef struct _SmBodyMotoGetDhParameters SmBodyMotoGetDhParameters;
 
 //--------------
+// Real-time Motion
+//--------------
+
+typedef enum
+{
+  MOTO_REALTIME_MOTION_MODE_IDLE = 0,
+  MOTO_REALTIME_MOTION_MODE_JOINT_POSITION = 1,
+  MOTO_REALTIME_MOTION_MODE_JOINT_VELOCITY = 2
+} MotoRealTimeMotionMode;
+
+struct _SmBodyMotoRealTimeMotionJointStateExData
+{
+	int groupNo;  				// Robot/group ID;  0 = 1st robot 
+	float pos[ROS_MAX_JOINT];	// Feedback joint positions in radian.  Base to Tool joint order  
+	float vel[ROS_MAX_JOINT];	// Feedback joint velocities in radian/sec.  
+} __attribute__((__packed__));
+typedef struct _SmBodyMotoRealTimeMotionJointStateExData SmBodyMotoRealTimeMotionJointStateExData;
+
+struct _SmBodyMotoRealTimeMotionJointStateEx
+{
+  int messageId; // Message id that the external control must echo back in the command
+  MotoRealTimeMotionMode mode;
+	int numberOfValidGroups;
+  SmBodyMotoRealTimeMotionJointStateExData jointStateData[MOT_MAX_GR];
+} __attribute__((__packed__));
+typedef struct _SmBodyMotoRealTimeMotionJointStateEx SmBodyMotoRealTimeMotionJointStateEx;
+
+struct _SmBodyMotoRealTimeMotionJointCommandExData
+{
+	int groupNo;  				// Robot/group ID;  0 = 1st robot 
+	float command[ROS_MAX_JOINT];	// Command data. Either joint positions or velocities dependent on the current mode.
+} __attribute__((__packed__));
+typedef struct _SmBodyMotoRealTimeMotionJointCommandExData SmBodyMotoRealTimeMotionJointCommandExData;
+
+struct _SmBodyMotoRealTimeMotionJointCommandEx
+{
+  int messageId; // Message id that the external control must echo back in the command
+	int numberOfValidGroups;
+  SmBodyMotoRealTimeMotionJointCommandExData jointCommandData[MOT_MAX_GR];
+} __attribute__((__packed__));
+typedef struct _SmBodyMotoRealTimeMotionJointCommandEx SmBodyMotoRealTimeMotionJointCommandEx;
+
+
+//--------------
 // Body Union
 //--------------
 
@@ -372,6 +420,8 @@ typedef union
 	SmBodyMotoWriteIOGroupReply writeIOGroupReply;
 	SmBodyMotoIoCtrlReply ioCtrlReply;
 	SmBodyMotoGetDhParameters dhParameters;
+  SmBodyMotoRealTimeMotionJointStateEx realTimeMotionJointStateEx;
+  SmBodyMotoRealTimeMotionJointCommandEx realTimeMotionJointCommandEx;
 } SmBody;
 
 //-------------------

@@ -1,5 +1,4 @@
 // RealTimeMotionServer.c
-//
 /*
  * Software License Agreement (BSD License)
  *
@@ -37,6 +36,7 @@
 // Main Task:
 void Ros_RealTimeMotionServer_StartNewConnection(Controller* controller,
                                                  int sd);
+
 void Ros_RealTimeMotionServer_StopConnection(Controller* controller,
                                              int connectionIndex);
 
@@ -51,6 +51,9 @@ void Ros_RealTimeMotionServer_IncMoveLoopStart(Controller* controller);
 int Ros_RealTimeMotionServer_SimpleMsg_State(SimpleMsg* stateMsg,
                                              CtrlGroup* ctrlGroup,
                                              int sequence);
+
+// Stop real-time motion
+BOOL Ros_RealTimeMotionServer_StopMotion(Controller* controller);
 
 //-----------------------
 // Function implementation
@@ -161,6 +164,9 @@ void Ros_RealTimeMotionServer_WaitForSimpleMsg(Controller* controller,
 void Ros_RealTimeMotionServer_IncMoveLoopStart(
     Controller* controller)  //<-- IP_CLK priority task
 {
+  // Ensure that the motion is not stopped on the controller
+  controller->bStopMotion = FALSE;
+
   int groupNo = 0;
   float interpolPeriodSec = (float)controller->interpolPeriod * 0.001;
 
@@ -210,7 +216,9 @@ void Ros_RealTimeMotionServer_IncMoveLoopStart(
   // Control with pulse increments
   moveData.grp_pos_info[0].pos_tag.data[3] = MP_INC_PULSE_DTYPE;
 
-  while (timeoutCounter < REALTIME_MOTION_TIMEOUT_COUNTER_MAX) {
+  while (timeoutCounter < REALTIME_MOTION_TIMEOUT_COUNTER_MAX &&
+         Ros_Controller_IsMotionReady(controller) && !controller->bStopMotion) {
+
     // Sync with the interpolation clock
     mpClkAnnounce(MP_INTERPOLATION_CLK);
 
@@ -322,3 +330,4 @@ int Ros_RealTimeMotionServer_SimpleMsg_State(SimpleMsg* stateMsg,
 
   return stateMsg->prefix.length + sizeof(SmPrefix);
 }
+
