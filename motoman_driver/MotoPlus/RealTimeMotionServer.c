@@ -52,6 +52,10 @@ int Ros_RealTimeMotionServer_SimpleMsg_State(SimpleMsg* stateMsg,
                                              CtrlGroup* ctrlGroup,
                                              int sequence);
 
+int Ros_RealTimeMotionServer_MotoRealTimeMotionJointStateEx(
+    Controller* controller, int messageId, MotoRealTimeMotionMode mode,
+    SimpleMsg* sendMsg);
+
 // Stop real-time motion
 BOOL Ros_RealTimeMotionServer_StopMotion(Controller* controller);
 
@@ -216,16 +220,17 @@ void Ros_RealTimeMotionServer_IncMoveLoopStart(
   // Control with pulse increments
   moveData.grp_pos_info[0].pos_tag.data[3] = MP_INC_PULSE_DTYPE;
 
+  // Set mode to velocity control for now
+  MotoRealTimeMotionMode mode = MOTO_REALTIME_MOTION_MODE_JOINT_VELOCITY;
+
   while (timeoutCounter < REALTIME_MOTION_TIMEOUT_COUNTER_MAX &&
          Ros_Controller_IsMotionReady(controller) && !controller->bStopMotion) {
-
     // Sync with the interpolation clock
     mpClkAnnounce(MP_INTERPOLATION_CLK);
 
     // Populate state message and send to server
     memset(&stateMsg, CLEAR, sizeof(SimpleMsg));
-    msgSize = Ros_RealTimeMotionServer_SimpleMsg_State(
-        &stateMsg, controller->ctrlGroups[groupNo], sequence);
+    msgSize = Ros_RealTimeMotionServer_MotoRealTimeMotionJointStateEx(controller, sequence, mode, &stateMsg);
     if (msgSize > 0) {
       bytesSend = mpSend(sd, (char*)&stateMsg, sizeof(SimpleMsg), 0);
     }
@@ -286,8 +291,11 @@ void Ros_RealTimeMotionServer_IncMoveLoopStart(
 
       // Increment sequence number
       sequence++;
+      // Reset timeoutCounter
+      timeoutCounter = 0;
 
     } else {
+      // Increment timeout counter
       timeoutCounter++;
       printf(
           "RealTimeMotionServer: Read from socket timed out. Timeout counter "
@@ -302,32 +310,60 @@ void Ros_RealTimeMotionServer_IncMoveLoopStart(
   mpDeleteSelf;
 }
 
-int Ros_RealTimeMotionServer_SimpleMsg_State(SimpleMsg* stateMsg,
-                                             CtrlGroup* ctrlGroup,
-                                             int sequence) {
-  // Initialize memory
-  memset(stateMsg, CLEAR, sizeof(SimpleMsg));
-
-  // Set prefix: Length of message excluding the prefix
-  stateMsg->prefix.length = sizeof(SmHeader) + sizeof(SmBodyMotoMotionReply);
-
-  // Set the information of the reply
-  stateMsg->header.msgType = ROS_MSG_MOTO_MOTION_REPLY;
-  stateMsg->header.commType = ROS_COMM_TOPIC;
-  stateMsg->header.replyType = ROS_REPLY_INVALID;
-
-  stateMsg->body.motionReply.groupNo = ctrlGroup->groupNo;
-  stateMsg->body.motionReply.sequence = sequence;
-
+int Ros_RealTimeMotionServer_MotoRealTimeMotionJointStateEx(
+    Controller* controller, int messageId, MotoRealTimeMotionMode mode,
+    SimpleMsg* sendMsg) {
+  int bRet;
   long pulsePos[MAX_PULSE_AXES];
-  int bRet = Ros_CtrlGroup_GetFBPulsePos(ctrlGroup, pulsePos);
-  if (bRet != TRUE) {
-    return 0;
+  long pulseSpeed[MAX_PULSE_AXES];
+  int groupNo;
+
+  // initialize memory
+  memset(sendMsg, 0x00, sizeof(SimpleMsg));
+
+  // set prefix: length of message excluding the prefix
+  sendMsg->prefix.length =
+      sizeof(SmHeader) + sizeof(SmBodyMotoRealTimeMotionJointStateEx);
+
+  // set header information
+  sendMsg->header.msgType = ROS_MSG_MOTO_REALTIME_MOTION_JOINT_STATE_EX;
+  sendMsg->header.commType = ROS_COMM_TOPIC;
+  sendMsg->header.replyType = ROS_REPLY_INVALID;
+
+  // set number of valid groups
+  sendMsg->body.realTimeMotionJointStateEx.numberOfValidGroups =
+      controller->numGroup;
+
+  // set unique message id
+  sendMsg->body.realTimeMotionJointStateEx.messageId = messageId;
+
+  // set control mode (idle, position, velocity)
+  sendMsg->body.realTimeMotionJointStateEx.mode = mode;
+
+  // Populate the state of all control groups
+  for (groupNo = 0; groupNo < controller->numGroup; groupNo++) {
+    sendMsg->body.realTimeMotionJointStateEx.jointStateData[groupNo].groupNo =
+        groupNo;
+
+    // feedback position
+    bRet =
+        Ros_CtrlGroup_GetFBPulsePos(controller->ctrlGroups[groupNo], pulsePos);
+    if (bRet != TRUE) {
+      return 0;
+    }
+    Ros_CtrlGroup_ConvertToRosPos(
+        controller->ctrlGroups[groupNo], pulsePos,
+        sendMsg->body.realTimeMotionJointStateEx.jointStateData[groupNo].pos);
+
+    // servo speed
+    bRet = Ros_CtrlGroup_GetFBServoSpeed(controller->ctrlGroups[groupNo],
+                                         pulseSpeed);
+    if (bRet == TRUE) {
+      Ros_CtrlGroup_ConvertToRosPos(
+          controller->ctrlGroups[groupNo], pulseSpeed,
+          sendMsg->body.realTimeMotionJointStateEx.jointStateData[groupNo].vel);
+    }
   }
 
-  Ros_CtrlGroup_ConvertToRosPos(ctrlGroup, pulsePos,
-                                stateMsg->body.motionReply.data);
-
-  return stateMsg->prefix.length + sizeof(SmPrefix);
+  return sendMsg->prefix.length + sizeof(SmPrefix);
 }
-
