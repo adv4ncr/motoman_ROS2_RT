@@ -230,7 +230,8 @@ void Ros_RealTimeMotionServer_IncMoveLoopStart(
 
     // Populate state message and send to server
     memset(&stateMsg, CLEAR, sizeof(SimpleMsg));
-    msgSize = Ros_RealTimeMotionServer_MotoRealTimeMotionJointStateEx(controller, sequence, mode, &stateMsg);
+    msgSize = Ros_RealTimeMotionServer_MotoRealTimeMotionJointStateEx(
+        controller, sequence, mode, &stateMsg);
     if (msgSize > 0) {
       bytesSend = mpSend(sd, (char*)&stateMsg, sizeof(SimpleMsg), 0);
     }
@@ -251,25 +252,36 @@ void Ros_RealTimeMotionServer_IncMoveLoopStart(
         break;
       }
 
-      SmBodyMotoMotionCtrl* motionCtrl;
-      motionCtrl = &commandMsg.body.motionCtrl;
+      SmBodyMotoRealTimeMotionJointCommandEx* command =
+          &commandMsg.body.realTimeMotionJointCommandEx;
 
       // The received sequence number should match the state sequence number
       // sent in the same cycle
-      if (stateMsg.body.motionReply.sequence == motionCtrl->sequence) {
-        // Integrate rad/s -> rad for this cycle
-        int i;
-        for (i = 0; i < MAX_PULSE_AXES; i++) {
-          motionCtrl->data[i] *= interpolPeriodSec;
+      if (stateMsg.body.realTimeMotionJointStateEx.messageId ==
+          command->messageId) {
+        printf("Message ID: %d\n", command->messageId);
+
+        switch (mode) {
+          case MOTO_REALTIME_MOTION_MODE_IDLE:
+            // Fallthrough
+          case MOTO_REALTIME_MOTION_MODE_JOINT_POSITION:
+            // Fallthrough
+          case MOTO_REALTIME_MOTION_MODE_JOINT_VELOCITY:
+
+            for (groupNo = 0; groupNo < controller->numGroup; groupNo++) {
+              int axisNo;
+              for (axisNo = 0; axisNo < MAX_PULSE_AXES; axisNo++) {
+                command->jointCommandData[groupNo].command[axisNo] *=
+                    interpolPeriodSec;
+              }
+
+              // Convert from rad to pulse
+              Ros_CtrlGroup_ConvertToMotoPos(
+                  controller->ctrlGroups[groupNo],
+                  command->jointCommandData[groupNo].command,
+                  moveData.grp_pos_info[groupNo].pos);
+            }
         }
-
-        printf("Sequence: %d\n", motionCtrl->sequence);
-
-        // Convert from rad to pulse
-        Ros_CtrlGroup_ConvertToMotoPos(controller->ctrlGroups[groupNo],
-                                       commandMsg.body.motionCtrl.data,
-                                       moveData.grp_pos_info[groupNo].pos);
-
       } else {
         // Stop motion if sequence numbers do not match
         memset(&moveData.grp_pos_info[groupNo].pos, CLEAR,
@@ -293,12 +305,12 @@ void Ros_RealTimeMotionServer_IncMoveLoopStart(
       sequence++;
       // Reset timeoutCounter
       timeoutCounter = 0;
-
     } else {
       // Increment timeout counter
       timeoutCounter++;
       printf(
-          "RealTimeMotionServer: Read from socket timed out. Timeout counter "
+          "RealTimeMotionServer: Read from socket timed out. Timeout "
+          "counter "
           "at %u\n",
           timeoutCounter);
     }

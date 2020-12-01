@@ -190,6 +190,10 @@ int Ros_SimpleMsg_IoReply(int result, int subcode, SimpleMsg* replyMsg)
 	return(replyMsg->prefix.length + sizeof(SmPrefix));
 }
 
+
+
+
+
 #ifdef DEBUG
 // function to dump data structure for debugging
 void Ros_SimpleMsg_DumpTrajPtFull(SmBodyJointTrajPtFull* data)
