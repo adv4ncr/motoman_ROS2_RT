@@ -750,7 +750,7 @@ BOOL Ros_MotionServer_ServoPower(Controller* controller, int servoOnOff)
 #ifdef DUMMY_SERVO_MODE
 	return TRUE;
 #endif
-	
+
 	if (servoOnOff == OFF)
 		Ros_MotionServer_StopMotion(controller);
 
