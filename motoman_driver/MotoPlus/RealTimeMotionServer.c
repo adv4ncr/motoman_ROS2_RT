@@ -459,11 +459,11 @@ void Ros_RealTimeMotionServer_IncMoveLoopStart(
 		moveData.ctrl_grp |= (0x01 << i); 
 		moveData.grp_pos_info[i].pos_tag.data[0] = Ros_CtrlGroup_GetAxisConfig(controller->ctrlGroups[i]);
     // Control with pulse increments
-    moveData.grp_pos_info[i].pos_tag.data[3] = MP_INC_PULSE_DTYPE;
+    moveData.grp_pos_info[i].pos_tag.data[3] = MP_INC_ANGLE_DTYPE;
 	}
 
   // Set mode to velocity control for now
-  MotoRealTimeMotionMode mode = MOTO_REALTIME_MOTION_MODE_JOINT_POSITION;
+  MotoRealTimeMotionMode mode = MOTO_REALTIME_MOTION_MODE_JOINT_VELOCITY;
 
   while (timeoutCounter < REALTIME_MOTION_TIMEOUT_COUNTER_MAX &&
          Ros_Controller_IsMotionReady(controller) && !controller->bStopMotion) {
@@ -508,35 +508,32 @@ void Ros_RealTimeMotionServer_IncMoveLoopStart(
           case MOTO_REALTIME_MOTION_MODE_IDLE:
             // Fallthrough
           case MOTO_REALTIME_MOTION_MODE_JOINT_POSITION:
-            for (groupNo = 0; groupNo < controller->numGroup; groupNo++) {
+            //for (groupNo = 0; groupNo < controller->numGroup; groupNo++) {
 
-              // Current position in pulses
-              Ros_CtrlGroup_GetFBPulsePos(controller->ctrlGroups[groupNo], pulsePos);
-              // Convert command from rad to pulse
-              Ros_CtrlGroup_ConvertToMotoPos(
-                controller->ctrlGroups[groupNo],
-                command->jointCommandData[groupNo].command,
-                pulsePosCmd);
+            //  // Current position in pulses
+            //  Ros_CtrlGroup_GetFBPulsePos(controller->ctrlGroups[groupNo], pulsePos);
+            //  // Convert command from rad to pulse
+            //  Ros_CtrlGroup_ConvertToMotoPos(
+            //    controller->ctrlGroups[groupNo],
+            //    command->jointCommandData[groupNo].command,
+            //    pulsePosCmd);
 
-              int axisNo;
-              for (axisNo = 0; axisNo < MAX_PULSE_AXES; axisNo++) {
-                moveData.grp_pos_info[groupNo].pos[axisNo] = pulsePos[axisNo] - pulsePosCmd[axisNo];
-              }
-            }
-            break;
+            //  int axisNo;
+            //  for (axisNo = 0; axisNo < MAX_PULSE_AXES; axisNo++) {
+            //    moveData.grp_pos_info[groupNo].pos[axisNo] = pulsePos[axisNo] - pulsePosCmd[axisNo];
+            //  }
+            //}
+            //break;
           case MOTO_REALTIME_MOTION_MODE_JOINT_VELOCITY:
           {
             for (groupNo = 0; groupNo < controller->numGroup; groupNo++) {
+              
               int axisNo;
               for (axisNo = 0; axisNo < MAX_PULSE_AXES; axisNo++) {
-                command->jointCommandData[groupNo].command[axisNo] *=
-                  interpolPeriodSec;
+                moveData.grp_pos_info[groupNo].pos[axisNo] = (LONG)(command->jointCommandData[groupNo].command[axisNo] / RAD_PER_DEGREE * controller->interpolPeriod * 10); 
               }
-              // Convert from rad to pulse
-              Ros_CtrlGroup_ConvertToMotoPos(
-                controller->ctrlGroups[groupNo],
-                command->jointCommandData[groupNo].command,
-                moveData.grp_pos_info[groupNo].pos);
+              printf("Command: %d\n", moveData.grp_pos_info[groupNo].pos[0]);
+
             }
             break;
           }
