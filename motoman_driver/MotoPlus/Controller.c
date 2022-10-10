@@ -47,7 +47,7 @@ BOOL Ros_Controller_Init(Controller* controller);
 BOOL Ros_Controller_WaitInitReady(Controller* controller);
 BOOL Ros_Controller_IsValidGroupNo(Controller* controller, int groupNo);
 int Ros_Controller_OpenTcpSocket(int tcpPort);
-int Ros_Controller_OpenUdpSocket(int tcpPort);
+int Ros_Controller_OpenUdpSocket(int udpPort);
 void Ros_Controller_ConnectionServer_Start(Controller* controller);
 // Status related
 void Ros_Controller_StatusInit(Controller* controller);
@@ -312,7 +312,7 @@ closeSockHandle:
 // return: <0  : Error
 // 		     >=0 : socket descriptor
 //-------------------------------------------------------------------
-int Ros_Controller_OpenUdpSocket(int tcpPort)
+int Ros_Controller_OpenUdpSocket(int udpPort)	// Never used?
 {
 	int sd;  // socket descriptor
 	struct sockaddr_in	serverSockAddr;
@@ -327,7 +327,7 @@ int Ros_Controller_OpenUdpSocket(int tcpPort)
 	memset(&serverSockAddr, 0, sizeof(struct sockaddr_in));
 	serverSockAddr.sin_family = AF_INET;
 	serverSockAddr.sin_addr.s_addr = INADDR_ANY;
-	serverSockAddr.sin_port = mpHtons(tcpPort);
+	serverSockAddr.sin_port = mpHtons(udpPort);
 
 	//bind to network interface
 	ret = mpBind(sd, (struct sockaddr *)&serverSockAddr, sizeof(struct sockaddr_in)); 
@@ -354,8 +354,8 @@ void Ros_Controller_ConnectionServer_Start(Controller* controller)
   int     sdMotionServer = INVALID_SOCKET;
   int     sdStateServer = INVALID_SOCKET;
   int     sdIoServer = INVALID_SOCKET;
-  int     sdRealTimeMotionServer = INVALID_SOCKET;
-  int		sdMax;
+  int	  sdRealTimeMotionServer = INVALID_SOCKET;
+  int	  sdMax;
   struct  fd_set  fds;
   int     sdAccepted = INVALID_SOCKET;
   struct  sockaddr_in     clientSockAddr;
@@ -393,18 +393,21 @@ void Ros_Controller_ConnectionServer_Start(Controller* controller)
     goto closeSockHandle;
   }
 
+  // Set maximum socket file descriptor value
   sdMax = max(sdMotionServer, sdStateServer);
   sdMax = max(sdMax, sdIoServer);
   sdMax = max(sdMax, sdRealTimeMotionServer);
 
   FOREVER //Continue to accept multiple connections forever
   {
+	// Set corresponding bits to the fd_set structure
     FD_ZERO(&fds);
     FD_SET(sdMotionServer, &fds);
     FD_SET(sdStateServer, &fds);
     FD_SET(sdIoServer, &fds);
     FD_SET(sdRealTimeMotionServer, &fds);
 
+	// If a socket is available
     if (mpSelect(sdMax + 1, &fds, NULL, NULL, NULL) > 0)
     {
       memset(&clientSockAddr, 0, sizeof(clientSockAddr));
