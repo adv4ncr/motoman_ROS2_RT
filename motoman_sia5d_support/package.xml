@@ -43,16 +43,12 @@
 
   <exec_depend>joint_state_publisher</exec_depend>
   <exec_depend>motoman_driver</exec_depend>
+  <exec_depend>motoman_resources</exec_depend>
   <exec_depend>robot_state_publisher</exec_depend>
   <exec_depend>rviz</exec_depend>
   <exec_depend>xacro</exec_depend>
 
   <export>
     <architecture_independent/>
-    <deprecated>
-      This package will be removed in ROS Kinetic. The configuration data and
-      models included in this package can now be found in the motoman_sia_support
-      package in ROS Jade.
-    </deprecated>
   </export>
 </package>

@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Software License Agreement (BSD License)
  *
  * Copyright (c) 2013, Southwest Research Institute
@@ -40,9 +40,9 @@
 #endif
 
 #ifdef MOTOPLUS
-#include "simple_serialize.h"
-#include "shared_types.h"
-#include "log_wrapper.h"
+#include "simple_serialize.h"  // NOLINT(build/include)
+#include "shared_types.h"      // NOLINT(build/include)
+#include "log_wrapper.h"       // NOLINT(build/include)
 #endif
 
 namespace motoman
@@ -69,7 +69,7 @@ enum MotionReplyResult
   NOT_READY  = 5,
   MP_FAILURE = 6
 };
-}
+}  // namespace MotionReplyResults
 typedef MotionReplyResults::MotionReplyResult MotionReplyResult;
 
 /*
@@ -93,7 +93,9 @@ enum InvalidCode
   DATA_POSITION,
   DATA_SPEED,
   DATA_ACCEL,
-  DATA_INSUFFICIENT
+  DATA_INSUFFICIENT,
+  DATA_TIME,
+  DATA_TOOLNO
 };
 }  // namespace Invalid
 
@@ -111,10 +113,12 @@ enum NotReadyCode
   HOLD,
   NOT_STARTED,
   WAITING_ROS,
-  SKILLSEND
+  SKILLSEND,
+  PFL_ACTIVE,
+  INC_MOVE_ERROR
 };
 }  // namespace NotReady
-}  // MotionReplySubcodes
+}  // namespace MotionReplySubcodes
 
 /**
  * \brief Class encapsulated motion control reply data.  These messages are sent

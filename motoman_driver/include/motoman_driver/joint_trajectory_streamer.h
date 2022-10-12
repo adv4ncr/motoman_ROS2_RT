@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Software License Agreement (BSD License)
  *
  * Copyright (c) 2013, Southwest Research Institute
@@ -32,17 +32,17 @@
 #ifndef MOTOMAN_DRIVER_JOINT_TRAJECTORY_STREAMER_H
 #define MOTOMAN_DRIVER_JOINT_TRAJECTORY_STREAMER_H
 
+#include <mutex>  // NOLINT(build/c++11): Google doesn't approve of mutex
+                  // see https://github.com/google/styleguide/issues/194
 #include <map>
 #include <string>
 #include <vector>
 #include "motoman_driver/motion_ctrl.h"
 #include "motoman_driver/industrial_robot_client/joint_trajectory_streamer.h"
+#include "motoman_msgs/SelectTool.h"
 #include "simple_message/joint_data.h"
 #include "simple_message/simple_message.h"
 #include "std_srvs/Trigger.h"
-#include "motoman_driver/io_ctrl.h"
-#include "motoman_msgs/ReadSingleIO.h"
-#include "motoman_msgs/WriteSingleIO.h"
 
 namespace motoman
 {
@@ -50,7 +50,6 @@ namespace joint_trajectory_streamer
 {
 
 using motoman::motion_ctrl::MotomanMotionCtrl;
-using motoman::io_ctrl::MotomanIoCtrl;
 using industrial_robot_client::joint_trajectory_streamer::JointTrajectoryStreamer;
 using industrial::simple_message::SimpleMessage;
 using industrial::smpl_msg_connection::SmplMsgConnection;
@@ -79,7 +78,7 @@ public:
    *
    * \param robot_id robot group # on this controller (for multi-group systems)
    */
-  MotomanJointTrajectoryStreamer(int robot_id = -1) : JointTrajectoryStreamer(1),
+  explicit MotomanJointTrajectoryStreamer(int robot_id = -1) : JointTrajectoryStreamer(1),
     robot_id_(robot_id) {}
 
   ~MotomanJointTrajectoryStreamer();
@@ -134,20 +133,16 @@ public:
   virtual void streamingThread();
 
 protected:
-
   int robot_id_;
   MotomanMotionCtrl motion_ctrl_;
-  MotomanIoCtrl io_ctrl_;
+
+  // used to enforce serialisation of all access to the single, shared SmplMsgConnection.
+  // The MotomanMotionCtrl instances can access the shared SmplMsgConnection
+  // concurrently, and SimpleMessage is not thread-safe, so we enforce here in
+  // in this class.
+  std::mutex smpl_msg_conx_mutex_;
 
   std::map<int, MotomanMotionCtrl> motion_ctrl_map_;
-
-  ros::ServiceServer srv_read_single_io;   // handle for read_single_io service
-  ros::ServiceServer srv_write_single_io;   // handle for write_single_io service
-
-  bool readSingleIoCB(motoman_msgs::ReadSingleIO::Request &req,
-                            motoman_msgs::ReadSingleIO::Response &res);
-  bool writeSingleIoCB(motoman_msgs::WriteSingleIO::Request &req,
-                            motoman_msgs::WriteSingleIO::Response &res);
 
   void trajectoryStop();
   bool is_valid(const trajectory_msgs::JointTrajectory &traj);
@@ -169,6 +164,11 @@ protected:
   ros::ServiceServer enabler_;
 
   /**
+   * \brief Service used to select a specific tool file on the robot controller.
+   */
+  ros::ServiceServer srv_select_tool_;
+
+  /**
    * \brief Disable the robot. Response is true if the state was flipped or
    * false if the state has not changed.
    *
@@ -184,7 +184,11 @@ protected:
   bool enableRobotCB(std_srvs::Trigger::Request &req,
                      std_srvs::Trigger::Response &res);
 
-
+  /**
+   * \brief Instruct MotoROS to activate a specific tool file on the controller.
+   */
+  bool selectToolCB(motoman_msgs::SelectTool::Request &req,
+                    motoman_msgs::SelectTool::Response &res);
 };
 
 }  // namespace joint_trajectory_streamer

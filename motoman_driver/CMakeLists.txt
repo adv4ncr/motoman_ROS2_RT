@@ -1,5 +1,10 @@
-cmake_minimum_required(VERSION 2.8.3)
+cmake_minimum_required(VERSION 3.0.2)
 project(motoman_driver)
+
+# require C++11
+set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Load catkin and all dependencies required for this package
 find_package(
@@ -56,18 +61,36 @@ catkin_package(
 
 
 set(MSG_SRC_FILES
+  src/simple_message/messages/motoman_motion_ctrl_message.cpp
+  src/simple_message/messages/motoman_motion_reply_message.cpp
+  src/simple_message/messages/motoman_read_mregister_message.cpp
+  src/simple_message/messages/motoman_read_mregister_reply_message.cpp
   src/simple_message/messages/motoman_read_single_io_message.cpp
   src/simple_message/messages/motoman_read_single_io_reply_message.cpp
+  src/simple_message/messages/motoman_read_group_io_message.cpp
+  src/simple_message/messages/motoman_read_group_io_reply_message.cpp
+  src/simple_message/messages/motoman_select_tool_message.cpp
+  src/simple_message/messages/motoman_write_mregister_message.cpp
+  src/simple_message/messages/motoman_write_mregister_reply_message.cpp
   src/simple_message/messages/motoman_write_single_io_message.cpp
   src/simple_message/messages/motoman_write_single_io_reply_message.cpp
+  src/simple_message/messages/motoman_write_group_io_message.cpp
+  src/simple_message/messages/motoman_write_group_io_reply_message.cpp
   src/simple_message/motoman_motion_ctrl.cpp
-  src/simple_message/motoman_motion_ctrl_message.cpp
   src/simple_message/motoman_motion_reply.cpp
-  src/simple_message/motoman_motion_reply_message.cpp
+  src/simple_message/motoman_read_mregister.cpp
+  src/simple_message/motoman_read_mregister_reply.cpp
   src/simple_message/motoman_read_single_io.cpp
   src/simple_message/motoman_read_single_io_reply.cpp
+  src/simple_message/motoman_read_group_io.cpp
+  src/simple_message/motoman_read_group_io_reply.cpp
+  src/simple_message/motoman_select_tool.cpp
+  src/simple_message/motoman_write_mregister.cpp
+  src/simple_message/motoman_write_mregister_reply.cpp
   src/simple_message/motoman_write_single_io.cpp
   src/simple_message/motoman_write_single_io_reply.cpp
+  src/simple_message/motoman_write_group_io.cpp
+  src/simple_message/motoman_write_group_io_reply.cpp
 )
 
 set(CLIENT_SRC_FILES
@@ -103,6 +126,7 @@ target_link_libraries(motoman_industrial_robot_client
   industrial_robot_client
   industrial_utils)
 add_dependencies(motoman_industrial_robot_client ${catkin_EXPORTED_TARGETS})
+target_compile_definitions(motoman_industrial_robot_client PUBLIC ${industrial_robot_client_DEFINITIONS})
 
 # Robot state node
 add_executable(motoman_robot_state
@@ -129,6 +153,19 @@ set_target_properties(motoman_motion_streaming_interface
   PROPERTIES OUTPUT_NAME motion_streaming_interface
   PREFIX "")
 
+# I/O relay node
+add_executable(motoman_io_relay
+  src/io_relay_node.cpp
+  src/io_relay.cpp
+  src/io_ctrl.cpp)
+target_link_libraries(motoman_io_relay
+  motoman_simple_message
+  motoman_industrial_robot_client
+  ${catkin_LIBRARIES})
+set_target_properties(motoman_io_relay
+  PROPERTIES OUTPUT_NAME io_relay
+  PREFIX "")
+
 
 #----------------------------------------------------------------
 # FS100 uses opposite byte-ordering from most i386-based PCs
@@ -145,6 +182,7 @@ target_link_libraries(motoman_industrial_robot_client_bswap
   industrial_robot_client_bswap
   industrial_utils)
 add_dependencies(motoman_industrial_robot_client_bswap ${catkin_EXPORTED_TARGETS})
+target_compile_definitions(motoman_industrial_robot_client_bswap PUBLIC ${industrial_robot_client_bswap_DEFINITIONS})
 
 # Robot state node
 add_executable(motoman_robot_state_bswap
@@ -171,6 +209,20 @@ set_target_properties(motoman_motion_streaming_interface_bswap
   PROPERTIES OUTPUT_NAME motion_streaming_interface_bswap
   PREFIX "")
 
+# I/O relay node
+add_executable(motoman_io_relay_bswap
+  src/io_relay_node.cpp
+  src/io_relay.cpp
+  src/io_ctrl.cpp)
+target_link_libraries(motoman_io_relay_bswap
+  motoman_simple_message_bswap
+  motoman_industrial_robot_client_bswap
+  ${catkin_LIBRARIES})
+set_target_properties(motoman_io_relay_bswap
+  PROPERTIES OUTPUT_NAME io_relay_bswap
+  PREFIX "")
+
+
 add_executable(${PROJECT_NAME}_joint_trajectory_action
   src/industrial_robot_client/joint_trajectory_action.cpp
   src/joint_trajectory_action_node.cpp)
@@ -187,6 +239,8 @@ target_link_libraries(${PROJECT_NAME}_joint_trajectory_action
 # binaries
 install(TARGETS
   ${PROJECT_NAME}_joint_trajectory_action
+  motoman_io_relay
+  motoman_io_relay_bswap
   motoman_motion_streaming_interface
   motoman_motion_streaming_interface_bswap
   motoman_robot_state
@@ -224,5 +278,14 @@ install(DIRECTORY
 
 if(CATKIN_ENABLE_TESTING)
   find_package(roslint REQUIRED)
-  roslint_cpp()
+  # gather files, ignoring MotoPlus (we can't use '--exclude' (not supported
+  # by roslint's version ofcpplint) and we don't want to add a CPPLINT.cfg
+  # file to MotoPlus)
+  file(GLOB_RECURSE files_to_cpplint RELATIVE ${CMAKE_CURRENT_LIST_DIR} "*.cpp" "*.h")
+  string(REGEX REPLACE "MotoPlus/[^;]+;?" "" files_to_cpplint "${files_to_cpplint}")
+  roslint_cpp(${files_to_cpplint})
+  roslint_add_test()
+
+  find_package(roslaunch REQUIRED)
+  roslaunch_add_file_check(tests/roslaunch_test_io_relay.xml)
 endif()

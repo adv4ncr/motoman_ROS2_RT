@@ -60,11 +60,18 @@ JointTrajectoryAction::JointTrajectoryAction() :
   pn.param("constraints/goal_threshold", goal_threshold_, DEFAULT_GOAL_THRESHOLD_);
 
   std::map<int, RobotGroup> robot_groups;
-  getJointGroups("topic_list", robot_groups);
-
-  for (int i = 0; i < robot_groups.size(); i++)
+  if (!getJointGroups("topic_list", robot_groups))
   {
+    // this is a WARN as this class is the multi-group version of the regular JTA,
+    // and we're actually expecting to find the 'topic_list' parameter, as using
+    // this multi-group version with a single-group system is unnecessary and also
+    // doesn't make much sense.
+    // It probably also won't work.
+    ROS_WARN("Expecting/assuming single motion-group controller configuration");
+  }
 
+  for (size_t i = 0; i < robot_groups.size(); i++)
+  {
     std::string joint_path_action_name = robot_groups[i].get_ns() + "/" + robot_groups[i].get_name();
     std::vector<std::string> rg_joint_names = robot_groups[i].get_joint_names();
     int group_number_int = robot_groups[i].get_group_id();
@@ -201,11 +208,11 @@ void JointTrajectoryAction::goalCB(JointTractoryActionServer::GoalHandle gh)
 
   motoman_msgs::DynamicJointTrajectory dyn_traj;
 
-  for (int i = 0; i < gh.getGoal()->trajectory.points.size(); i++)
+  for (size_t i = 0; i < gh.getGoal()->trajectory.points.size(); i++)
   {
     motoman_msgs::DynamicJointPoint dpoint;
 
-    for (int rbt_idx = 0; rbt_idx < robot_groups_.size(); rbt_idx++)
+    for (size_t rbt_idx = 0; rbt_idx < robot_groups_.size(); rbt_idx++)
     {
       size_t ros_idx = std::find(
                          gh.getGoal()->trajectory.joint_names.begin(),
@@ -349,7 +356,7 @@ void JointTrajectoryAction::goalCB(JointTractoryActionServer::GoalHandle gh, int
 
         motoman_msgs::DynamicJointTrajectory dyn_traj;
 
-        for (int i = 0; i < current_traj_map_[group_number].points.size(); ++i)
+        for (size_t i = 0; i < current_traj_map_[group_number].points.size(); ++i)
         {
           motoman_msgs::DynamicJointsGroup dyn_group;
           motoman_msgs::DynamicJointPoint dyn_point;

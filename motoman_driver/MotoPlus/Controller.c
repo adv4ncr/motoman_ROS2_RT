@@ -131,6 +131,13 @@ BOOL Ros_Controller_Init(Controller* controller)
 	bInitOk = TRUE;
 	controller->bRobotJobReady = FALSE;
 	controller->bStopMotion = FALSE;
+	status = GP_isPflEnabled(&controller->bPFLEnabled);
+	if (status != OK)
+		bInitOk = FALSE;
+	if (controller->bPFLEnabled)
+		printf("System has PFL Enabled\r\n");
+	controller->bPFLduringRosMove = FALSE;
+	controller->bMpIncMoveError = FALSE;
 	Ros_Controller_StatusInit(controller);
 	Ros_Controller_StatusRead(controller, controller->ioStatus);
 	
@@ -199,10 +206,10 @@ BOOL Ros_Controller_Init(Controller* controller)
 		controller->tidIoConnections[i] = INVALID_TASK;
 	}
 
-	controller->tidStateSendState = INVALID_TASK;
 	for (i = 0; i < MAX_STATE_CONNECTIONS; i++)
 	{
 		controller->sdStateConnections[i] = INVALID_SOCKET;
+		controller->tidStateSendState[i] = INVALID_TASK;
 	}
 
 	for (i = 0; i < MAX_MOTION_CONNECTIONS; i++)
@@ -531,6 +538,9 @@ void Ros_Controller_StatusInit(Controller* controller)
 #if (YRC1000||YRC1000u)
 	controller->ioStatusAddr[IO_ROBOTSTATUS_PFL_STOP].ulAddr = 81702;			// PFL function stopped the motion
 	controller->ioStatusAddr[IO_ROBOTSTATUS_PFL_ESCAPE].ulAddr = 81703;			// PFL function escape from clamping motion
+	controller->ioStatusAddr[IO_ROBOTSTATUS_PFL_AVOIDING].ulAddr = 15120;		// PFL function avoidance operating
+	controller->ioStatusAddr[IO_ROBOTSTATUS_PFL_AVOID_JOINT].ulAddr = 15124;	// PFL function avoidance joint enabled
+	controller->ioStatusAddr[IO_ROBOTSTATUS_PFL_AVOID_TRANS].ulAddr = 15125;	// PFL function avoidance translation enabled
 #endif
 	controller->alarmCode = 0;
 }
@@ -601,7 +611,8 @@ BOOL Ros_Controller_IsMotionReady(Controller* controller)
 	BOOL bMotionReady;
 	
 #ifndef DUMMY_SERVO_MODE	
-	bMotionReady = controller->bRobotJobReady && Ros_Controller_IsOperating(controller) && Ros_Controller_IsRemote(controller);
+	bMotionReady = controller->bRobotJobReady && Ros_Controller_IsOperating(controller) && Ros_Controller_IsRemote(controller)
+		&& !Ros_Controller_IsPflActive(controller) && !controller->bMpIncMoveError && !controller->bStopMotion;
 #else
 	bMotionReady = controller->bRobotJobReady && Ros_Controller_IsOperating(controller);
 #endif
@@ -621,7 +632,14 @@ BOOL Ros_Controller_IsMotionReady(Controller* controller)
 BOOL Ros_Controller_IsPflActive(Controller* controller)
 {
 #if (YRC1000||YRC1000u)
-	return ((controller->ioStatus[IO_ROBOTSTATUS_PFL_STOP] | controller->ioStatus[IO_ROBOTSTATUS_PFL_ESCAPE]) != 0);
+	if (controller->bPFLEnabled) {
+		if (controller->bPFLduringRosMove || controller->ioStatus[IO_ROBOTSTATUS_PFL_STOP] || controller->ioStatus[IO_ROBOTSTATUS_PFL_ESCAPE] ||
+			(controller->ioStatus[IO_ROBOTSTATUS_PFL_AVOIDING]
+				&& (controller->ioStatus[IO_ROBOTSTATUS_PFL_AVOID_JOINT] || controller->ioStatus[IO_ROBOTSTATUS_PFL_AVOID_TRANS])) != 0)
+		{
+			return TRUE;
+		}
+	}
 #endif
 	return FALSE;
 }
@@ -662,6 +680,10 @@ int Ros_Controller_GetNotReadySubcode(Controller* controller)
 	// Check PFL active
 	if (Ros_Controller_IsPflActive(controller))
 		return ROS_RESULT_NOT_READY_PFL_ACTIVE;
+
+	// Check if Incremental Motion was rejected
+	if (controller->bMpIncMoveError)
+		return ROS_RESULT_NOT_READY_INC_MOVE_ERROR;
 
 	// Check operating
 	if(!Ros_Controller_IsOperating(controller))
@@ -789,11 +811,16 @@ BOOL Ros_Controller_StatusUpdate(Controller* controller)
 					case IO_ROBOTSTATUS_ALARM_SYSTEM: // alarm
 					case IO_ROBOTSTATUS_ALARM_USER: // alarm
 					{
-						if(ioStatus[IO_ROBOTSTATUS_ALARM_USER] == 0)
+						if ((ioStatus[IO_ROBOTSTATUS_ALARM_MAJOR] == 0) &&
+							(ioStatus[IO_ROBOTSTATUS_ALARM_MINOR] == 0) &&
+							(ioStatus[IO_ROBOTSTATUS_ALARM_SYSTEM] == 0) &&
+							(ioStatus[IO_ROBOTSTATUS_ALARM_USER] == 0))
 							controller->alarmCode = 0;
 						else
+						{
 							controller->alarmCode = Ros_Controller_GetAlarmCode();
-
+							Ros_MotionServer_ClearQ_All(controller);
+						}
 						break;
 					}
 
@@ -807,17 +834,17 @@ BOOL Ros_Controller_StatusUpdate(Controller* controller)
 						}
 						else // signal turned ON (rising edge)
 							controller->bRobotJobReady = TRUE; //job is ready (even if other factors will prevent motion)
-
 						break;
 					}
 #if (YRC1000||YRC1000u)
 					case IO_ROBOTSTATUS_PFL_STOP: // PFL Stop
 					case IO_ROBOTSTATUS_PFL_ESCAPE: //  PFL Escaping
+					case IO_ROBOTSTATUS_PFL_AVOIDING: // PFL Avoidance
 					{
-						if (ioStatus[IO_ROBOTSTATUS_PFL_ESCAPE] == ON)  // signal turned ON
+						if (controller->bPFLEnabled && controller->bRobotJobReady && Ros_Controller_IsPflActive(controller))
 						{
-							// Job execution stopped take action
-							controller->bRobotJobReady = FALSE; //force job to be restarted with new ROS_CMD_START_TRAJ_MODE command
+							// Job execution stopped by PFL take action
+							controller->bPFLduringRosMove = TRUE; //force job to be restarted with new ROS_CMD_START_TRAJ_MODE command
 							Ros_MotionServer_ClearQ_All(controller);
 						}
 						break;

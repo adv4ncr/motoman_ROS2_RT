@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Software License Agreement (BSD License)
  *
  * Copyright (c) 2013, Southwest Research Institute
@@ -28,6 +28,7 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
+
 #include <string>
 #ifdef ROS
 #include "motoman_driver/simple_message/motoman_motion_ctrl.h"
@@ -37,10 +38,10 @@
 #endif
 
 #ifdef MOTOPLUS
-#include "motoman_motion_ctrl.h"
-#include "motoman_motion_reply.h"
-#include "shared_types.h"
-#include "log_wrapper.h"
+#include "motoman_motion_ctrl.h"   // NOLINT(build/include)
+#include "motoman_motion_reply.h"  // NOLINT(build/include)
+#include "shared_types.h"          // NOLINT(build/include)
+#include "log_wrapper.h"           // NOLINT(build/include)
 #endif
 
 using industrial::shared_types::shared_int;
@@ -133,6 +134,10 @@ std::string MotionReply::getSubcodeString(shared_int code)
     return "Invalid acceleration data";
   case MotionReplySubcodes::Invalid::DATA_INSUFFICIENT:
     return "Insufficient trajectory data.  Must supply valid time, pos, and velocity fields.";
+  case MotionReplySubcodes::Invalid::DATA_TIME:
+    return "Invalid time data: exceeded maximum trajectory duration of 14400 sec (ros-industrial/motoman#244)";
+  case MotionReplySubcodes::Invalid::DATA_TOOLNO:
+    return "Invalid tool file specified";
 
   case MotionReplySubcodes::NotReady::UNSPECIFIED:
     return "Unknown";
@@ -156,6 +161,12 @@ std::string MotionReply::getSubcodeString(shared_int code)
     return "Waiting on ROS";
   case MotionReplySubcodes::NotReady::SKILLSEND:
     return "Waiting on SkillSend";
+  case MotionReplySubcodes::NotReady::PFL_ACTIVE:
+    return "Power and Force Limiting (PFL) was activated: "
+      "please reset PFL on the robot, re-enable the driver (call the service) "
+      "and send a new trajectory";
+  case MotionReplySubcodes::NotReady::INC_MOVE_ERROR:
+    return "Incremental move rejected on MotoROS side";
 
   default:
     return "Unknown";
@@ -226,7 +237,8 @@ bool MotionReply::load(industrial::byte_array::ByteArray *buffer)
     shared_real value = this->getData(i);
     if (!buffer->load(value))
     {
-      LOG_ERROR("Failed to load MotionReply data element %d from data[%d]", static_cast<int>(i), buffer->getBufferSize());
+      LOG_ERROR("Failed to load MotionReply data element %d from data[%d]", static_cast<int>(i),
+                buffer->getBufferSize());
       return false;
     }
   }
@@ -244,7 +256,8 @@ bool MotionReply::unload(industrial::byte_array::ByteArray *buffer)
     shared_real value;
     if (!buffer->unload(value))
     {
-      LOG_ERROR("Failed to unload message data element: %d from data[%d]", static_cast<int>(i), buffer->getBufferSize());
+      LOG_ERROR("Failed to unload message data element: %d from data[%d]", static_cast<int>(i),
+                buffer->getBufferSize());
       return false;
     }
     this->setData(i, value);

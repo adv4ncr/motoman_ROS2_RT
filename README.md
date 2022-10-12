@@ -1,12 +1,13 @@
 # Motoman
 
-[![Build Status: ROS buildfarm](http://build.ros.org/job/Kdev__motoman__ubuntu_xenial_amd64/badge/icon)](http://build.ros.org/job/Kdev__motoman__ubuntu_xenial_amd64)
-[![Build Status: Travis CI](https://travis-ci.com/ros-industrial/motoman.svg?branch=kinetic-devel)](https://travis-ci.com/ros-industrial/motoman)
+[![Build Status: Ubuntu Xenial (Actions)](https://github.com/ros-industrial/motoman/workflows/CI%20-%20Ubuntu%20Xenial/badge.svg?branch=kinetic-devel)](https://github.com/ros-industrial/motoman/actions?query=workflow%3A%22CI+-+Ubuntu+Xenial%22)
+[![Build Status: Ubuntu Bionic (Actions)](https://github.com/ros-industrial/motoman/workflows/CI%20-%20Ubuntu%20Bionic/badge.svg?branch=kinetic-devel)](https://github.com/ros-industrial/motoman/actions?query=workflow%3A%22CI+-+Ubuntu+Bionic%22)
+[![Build Status: Ubuntu Focal (Actions)](https://github.com/ros-industrial/motoman/workflows/CI%20-%20Ubuntu%20Focal/badge.svg?branch=kinetic-devel)](https://github.com/ros-industrial/motoman/actions?query=workflow%3A%22CI+-+Ubuntu+Focal%22)
 
 [![license - apache 2.0](https://img.shields.io/:license-Apache%202.0-yellowgreen.svg)](https://opensource.org/licenses/Apache-2.0)
 [![license - bsd 3 clause](https://img.shields.io/:license-BSD%203--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)
 
-[![support level: consortium / vendor](https://img.shields.io/badge/support%20level-consortium%20/%20vendor-brightgreen.png)](http://rosindustrial.org/news/2016/10/7/better-supporting-a-growing-ros-industrial-software-platform)
+[![support level: consortium / vendor](https://img.shields.io/badge/support%20level-consortium%20/%20vendor-brightgreen.svg)](http://rosindustrial.org/news/2016/10/7/better-supporting-a-growing-ros-industrial-software-platform)
 
 
 [ROS-Industrial][] Motoman metapackage. See the [ROS wiki][] page for more information.
@@ -21,27 +22,11 @@ Branch naming follows the ROS distribution they are compatible with. `-devel` br
 Older releases may be found in the Github mirror of the old ROS-Industrial [subversion repository][].
 
 
-## ROS Distro Support
-
-|         | Kinetic |
-|:-------:|:-------:|
-| Branch  | [`kinetic-devel`](https://github.com/ros-industrial/motoman/tree/kinetic-devel) |
-| Status  | supported |
-| Version | [version](http://repositories.ros.org/status_page/ros_kinetic_default.html?q=motoman) |
-
-
-## ROS Buildfarm
-
-|         |  Kinetic Source  |  Kinetic Debian  |
-|:-------:|:----------------:|:-----------------|
-| motoman | [![not released](http://build.ros.org/buildStatus/icon?job=Ksrc_uX__motoman__ubuntu_xenial__source)](http://build.ros.org/view/Ksrc_uX/job/Ksrc_uX__motoman__ubuntu_xenial__source/) | [![not released](http://build.ros.org/buildStatus/icon?job=Kbin_uX64__motoman__ubuntu_xenial_amd64__binary)](http://build.ros.org/view/Kbin_uX64/job/Kbin_uX64__motoman__ubuntu_xenial_amd64__binary/) |
-
-
 ## Building
 
 ### On newer (or older) versions of ROS
 
-Building the packages on newer (or older) versions of ROS is in most cases possible and supported. For example: building the packages in this repository on Ubuntu Xenial/ROS Kinetic or Ubuntu Bionic/ROS Melodic systems is supported. This will require creating a Catkin workspace, cloning this repository, installing all required dependencies and finally building the workspace.
+Building the packages on newer (or older) versions of ROS is in most cases possible and supported. For example: building the packages in this repository on Ubuntu Xenial/ROS Kinetic, Ubuntu Bionic/ROS Melodic or Ubuntu Focal/ROS Noetic systems is supported. This will require creating a Catkin workspace, cloning this repository, installing all required dependencies and finally building the workspace.
 
 ### Catkin tools
 
@@ -57,8 +42,7 @@ These instructions build the `kinetic-devel` branch on a ROS Kinetic system:
 # change to the root of the Catkin workspace
 $ cd $HOME/catkin_ws
 
-# retrieve the latest development version of motoman. If you'd rather
-# use the latest released version, replace 'kinetic-devel' with 'kinetic'
+# retrieve the latest development version of motoman.
 $ git clone -b kinetic-devel https://github.com/ros-industrial/motoman.git src/motoman
 
 # check build dependencies. Note: this may install additional packages,
