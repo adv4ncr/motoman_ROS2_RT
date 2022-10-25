@@ -1,4 +1,4 @@
-﻿// MotionServer.c
+// MotionServer.c
 //
 /*
 * Software License Agreement (BSD License) 
@@ -714,6 +714,8 @@ int Ros_MotionServer_MotionCtrlProcess(Controller* controller, SimpleMsg* receiv
 				Ros_SimpleMsg_MotionReply(receiveMsg, ROS_RESULT_FAILURE, 0, replyMsg, receiveMsg->body.motionCtrl.groupNo);
 			break;
 		}
+		default:
+			break;
 	}
 
 	return 0;

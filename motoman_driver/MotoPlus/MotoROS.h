@@ -32,7 +32,7 @@
 #ifndef MOTOROS_H
 #define MOTOROS_H
 
-#define APPLICATION_VERSION					"1.9.10"
+#define APPLICATION_VERSION					"0.1.1"
 
 #include "MotoPlus.h"
 #include "ParameterExtraction.h"
@@ -42,7 +42,6 @@
 #include "IoServer.h"
 #include "MotionServer.h"
 #include "StateServer.h"
-#include "IoServer.h"
 #include "RealTimeMotionServer.h"
 
 #endif

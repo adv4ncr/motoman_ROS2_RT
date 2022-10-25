@@ -1,4 +1,4 @@
-﻿// CtrlGroup.c
+// CtrlGroup.c
 //
 /*
 * Software License Agreement (BSD License) 
@@ -566,11 +566,11 @@ void Ros_CtrlGroup_ConvertToMotoPos(CtrlGroup* ctrlGroup, float radPos[MAX_PULSE
 		for (i = 0; i < ctrlGroup->numAxes; i++)
 		{
 			if (i < 2)
-				motopulsePos[i] = (int)(radPos[i] * ctrlGroup->pulseToRad.PtoR[i]);
+				motopulsePos[i] = (int)round(radPos[i] * ctrlGroup->pulseToRad.PtoR[i]);
 			else if (i == 2)
-				motopulsePos[6] = (int)(radPos[2] * ctrlGroup->pulseToRad.PtoR[6]);
+				motopulsePos[6] = (int)round(radPos[2] * ctrlGroup->pulseToRad.PtoR[6]);
 			else
-				motopulsePos[i - 1] = (int)(radPos[i] * ctrlGroup->pulseToRad.PtoR[i - 1]);
+				motopulsePos[i - 1] = (int)round(radPos[i] * ctrlGroup->pulseToRad.PtoR[i - 1]);
 		}
 	}
 	else if (Ros_CtrlGroup_IsRobot(ctrlGroup) && ctrlGroup->numAxes < 6)
@@ -596,7 +596,7 @@ void Ros_CtrlGroup_ConvertToMotoPos(CtrlGroup* ctrlGroup, float radPos[MAX_PULSE
 			else
 				conversion = 1.0;
 
-			motopulsePos[mpi] = (int)(radPos[rpi] * conversion);
+			motopulsePos[mpi] = (int)round(radPos[rpi] * conversion);
 		}
 	}
 	else
@@ -611,7 +611,7 @@ void Ros_CtrlGroup_ConvertToMotoPos(CtrlGroup* ctrlGroup, float radPos[MAX_PULSE
 			else
 				conversion = 1.0;
 
-			motopulsePos[i] = (int)(radPos[i] * conversion);
+			motopulsePos[i] = (int)round(radPos[i] * conversion);
 		}
 	}
 }

@@ -1,4 +1,4 @@
-﻿// SimpleMessage.h
+// SimpleMessage.h
 //
 /*
 * Software License Agreement (BSD License) 
@@ -79,8 +79,8 @@ typedef enum
 
 	ROS_MSG_MOTO_GET_DH_PARAMETERS = 2020,
 
-  ROS_MSG_MOTO_REALTIME_MOTION_JOINT_STATE_EX = 2030,
-  ROS_MSG_MOTO_REALTIME_MOTION_JOINT_COMMAND_EX = 2031,
+	ROS_MSG_MOTO_REALTIME_MOTION_JOINT_STATE_EX = 2030,
+	ROS_MSG_MOTO_REALTIME_MOTION_JOINT_COMMAND_EX = 2031,
 
 } SmMsgType;
 
@@ -113,9 +113,9 @@ typedef enum
 	ROS_CMD_START_TRAJ_MODE = 200121, // Enable robot motion
 	ROS_CMD_STOP_TRAJ_MODE = 200122, // Disable robot motion
 	ROS_CMD_DISCONNECT = 200130,
-  ROS_CMD_START_RT_MODE = 200140, // Start real-time mode
-  ROS_CMD_STOP_RT_MODE = 200141, // Stop real-time mode
-  ROS_CMD_CHECK_TIMEOUT_CNT = 200142, // Check the number of late packages in RT mode
+	ROS_CMD_START_RT_MODE = 200140, // Start real-time mode
+	ROS_CMD_STOP_RT_MODE = 200141, // Stop real-time mode
+	ROS_CMD_CHECK_TIMEOUT_CNT = 200142, // Check the number of late packages in RT mode
 } SmCommandType;
 
 
@@ -413,10 +413,10 @@ typedef struct _SmBodyMotoRealTimeMotionJointStateExData SmBodyMotoRealTimeMotio
 
 struct _SmBodyMotoRealTimeMotionJointStateEx
 {
-  int messageId; // Message id that the external control must echo back in the command
-  MotoRealTimeMotionMode mode;
+	int messageId; // Message id that the external control must echo back in the command
+	MotoRealTimeMotionMode mode;
 	int numberOfValidGroups;
-  SmBodyMotoRealTimeMotionJointStateExData jointStateData[MOT_MAX_GR];
+	SmBodyMotoRealTimeMotionJointStateExData jointStateData[MOT_MAX_GR];
 } __attribute__((__packed__));
 typedef struct _SmBodyMotoRealTimeMotionJointStateEx SmBodyMotoRealTimeMotionJointStateEx;
 
@@ -429,9 +429,9 @@ typedef struct _SmBodyMotoRealTimeMotionJointCommandExData SmBodyMotoRealTimeMot
 
 struct _SmBodyMotoRealTimeMotionJointCommandEx
 {
-  int messageId; // Message id that the external control must echo back in the command
+	int messageId; // Message id that the external control must echo back in the command
 	int numberOfValidGroups;
-  SmBodyMotoRealTimeMotionJointCommandExData jointCommandData[MOT_MAX_GR];
+	SmBodyMotoRealTimeMotionJointCommandExData jointCommandData[MOT_MAX_GR];
 } __attribute__((__packed__));
 typedef struct _SmBodyMotoRealTimeMotionJointCommandEx SmBodyMotoRealTimeMotionJointCommandEx;
 

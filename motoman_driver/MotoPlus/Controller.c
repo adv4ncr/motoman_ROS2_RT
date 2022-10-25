@@ -1,4 +1,4 @@
-﻿// Controller.c
+// Controller.c
 //
 /*
 * Software License Agreement (BSD License) 
@@ -432,7 +432,7 @@ void Ros_Controller_ConnectionServer_Start(Controller* controller)
         {
           printf("Failed to set TCP_NODELAY.\r\n");
         }
-
+		Db_Print("[Controller] start motion server.\r\n"); // #TODO remove
         Ros_MotionServer_StartNewConnection(controller, sdAccepted);
       }
 
@@ -448,7 +448,7 @@ void Ros_Controller_ConnectionServer_Start(Controller* controller)
         {
           printf("Failed to set TCP_NODELAY.\r\n");
         }
-
+		Db_Print("[Controller] start state server.\r\n"); // #TODO remove
         Ros_StateServer_StartNewConnection(controller, sdAccepted);
       }
 
@@ -464,7 +464,7 @@ void Ros_Controller_ConnectionServer_Start(Controller* controller)
         {
           printf("Failed to set TCP_NODELAY.\r\n");
         }
-
+		Db_Print("[Controller] start IO server.\r\n"); // #TODO remove
         Ros_IoServer_StartNewConnection(controller, sdAccepted);
       }
 
@@ -480,7 +480,7 @@ void Ros_Controller_ConnectionServer_Start(Controller* controller)
         {
           printf("Failed to set TCP_NODELAY.\r\n");
         }
-
+		Db_Print("[Controller] start RT server.\r\n"); // #TODO remove
         Ros_RealTimeMotionServer_StartNewConnection(controller, sdAccepted);
       }
     }
