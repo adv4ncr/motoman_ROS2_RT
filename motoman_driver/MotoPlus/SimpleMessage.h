@@ -495,7 +495,7 @@ extern int Ros_SimpleMsg_IoReply(int result, int subcode, SimpleMsg* replyMsg);
 //#define DEBUG  1
 
 #ifdef DEBUG
-#warning Dont forget to disable the DEBUG flag
+// #warning Dont forget to disable the DEBUG flag
 // function to dump data structure for debugging
 extern void Ros_SimpleMsg_DumpTrajPtFull(SmBodyJointTrajPtFull* data);
 #endif
