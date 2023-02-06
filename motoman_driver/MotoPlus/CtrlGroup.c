@@ -340,6 +340,56 @@ BOOL Ros_CtrlGroup_GetFBPulsePos(CtrlGroup* ctrlGroup, long pulsePos[MAX_PULSE_A
 }
 
 //-------------------------------------------------------------------
+// Get the commanded pulse speed
+//-------------------------------------------------------------------
+BOOL Ros_CtrlGroup_GetServoSpeed(CtrlGroup* ctrlGroup, long pulseSpeed[MAX_PULSE_AXES])
+{
+	LONG status = 0;
+	MP_CTRL_GRP_SEND_DATA sData;
+	MP_SERVO_SPEED_RSP_DATA rData;
+
+	UINT8 i;
+
+	memset(pulseSpeed, 0, MAX_PULSE_AXES*sizeof(long));  // clear result, in case of error
+
+	// Set the control group
+	switch(ctrlGroup->groupId)
+	{
+		case MP_R1_GID: sData.sCtrlGrp = 0; break;
+		case MP_R2_GID: sData.sCtrlGrp = 1; break;
+		case MP_R3_GID: sData.sCtrlGrp = 2; break;
+		case MP_R4_GID: sData.sCtrlGrp = 3; break;
+		case MP_B1_GID: sData.sCtrlGrp = 8; break;
+		case MP_B2_GID: sData.sCtrlGrp = 9; break;
+		case MP_B3_GID: sData.sCtrlGrp = 10; break;
+		case MP_B4_GID: sData.sCtrlGrp = 11; break;
+		case MP_S1_GID: sData.sCtrlGrp = 16; break;
+		case MP_S2_GID: sData.sCtrlGrp = 17; break;
+		case MP_S3_GID: sData.sCtrlGrp = 18; break;
+		default: 
+			printf("Failed to get commanded pulse speed\nInvalid groupId: %d\n", ctrlGroup->groupId);
+			return FALSE;
+	}
+
+	// get servo speed
+	status = mpGetServoSpeed(&sData,&rData);
+	if (0 != status)
+	{
+		printf("Failed to get commanded speed: %u\n", status);
+		return FALSE;
+	}
+
+	// assign return value
+	for (i=0; i<MAX_PULSE_AXES; ++i)
+	{
+		pulseSpeed[i] = rData.lSpeed[i];
+	}
+	
+	return TRUE;
+}
+
+
+//-------------------------------------------------------------------
 // Get the corrected feedback pulse speed in pulse for each axis.
 //-------------------------------------------------------------------
 BOOL Ros_CtrlGroup_GetFBServoSpeed(CtrlGroup* ctrlGroup, long pulseSpeed[MAX_PULSE_AXES])

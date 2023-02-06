@@ -119,6 +119,7 @@ extern CtrlGroup* Ros_CtrlGroup_Create(int groupNo, BOOL bIsLastGrpToInit, float
 
 extern BOOL Ros_CtrlGroup_GetPulsePosCmd(CtrlGroup* ctrlGroup, long pulsePos[MAX_PULSE_AXES]);
 extern BOOL Ros_CtrlGroup_GetFBPulsePos(CtrlGroup* ctrlGroup, long pulsePos[MAX_PULSE_AXES]);
+extern BOOL Ros_CtrlGroup_GetServoSpeed(CtrlGroup* ctrlGroup, long pulseSpeed[MAX_PULSE_AXES]);
 extern BOOL Ros_CtrlGroup_GetFBServoSpeed(CtrlGroup* ctrlGroup, long pulseSpeed[MAX_PULSE_AXES]);
 
 extern BOOL Ros_CtrlGroup_GetTorque(CtrlGroup* ctrlGroup, double torqueValues[MAX_PULSE_AXES]);

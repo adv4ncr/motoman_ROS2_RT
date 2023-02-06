@@ -503,8 +503,7 @@ static BOOL _Ros_RealTimeMotionServer_GetUdpMsg()
 static BOOL _Ros_RealTimeMotionServer_SetStateMsg(Controller* controller, 
 	const enum RtMsgState *msg_state, const enum RtMsgCode *msg_code, const unsigned char *sequence )
 {
-	static long statePulsePos[RT_ROBOT_JOINTS_MAX];
-	static long statePulseSpeed[RT_ROBOT_JOINTS_MAX];
+	static long _pulse_values[MAX_PULSE_AXES];
 
 	// initialize memory
 	memset(&rtMsgSend, CLEAR, RT_MSG_STATE_SIZE);
@@ -524,21 +523,37 @@ static BOOL _Ros_RealTimeMotionServer_SetStateMsg(Controller* controller,
 		// sendMsg->body.realTimeMotionJointStateEx.jointStateData[groupNo].groupNo =
 		// 		groupNo;
 
-		// feedback position
-		if (!Ros_CtrlGroup_GetFBPulsePos(controller->ctrlGroups[groupNo], statePulsePos)) 
+		// commanded position
+		if (!Ros_CtrlGroup_GetPulsePosCmd(controller->ctrlGroups[groupNo], _pulse_values)) 
 		{
-			printf("[RT] Ros_CtrlGroup_GetFBPulsePos error\n");
+			Db_Print("[RT] Ros_CtrlGroup_GetPulsePosCmd error\n");
 			return FALSE;
 		}
-		Ros_CtrlGroup_ConvertToRosPos(controller->ctrlGroups[groupNo], statePulsePos, rtMsgSend.body.state[groupNo].pos);
+		Ros_CtrlGroup_ConvertToRosPos(controller->ctrlGroups[groupNo], _pulse_values, rtMsgSend.body.state[groupNo].pos_set);
 
-		// servo speed
-		if(!Ros_CtrlGroup_GetFBServoSpeed(controller->ctrlGroups[groupNo], statePulseSpeed))
+		// feedback position
+		if (!Ros_CtrlGroup_GetFBPulsePos(controller->ctrlGroups[groupNo], _pulse_values)) 
 		{
-			printf("[RT] Ros_CtrlGroup_GetFBServoSpeed error\n");
+			Db_Print("[RT] Ros_CtrlGroup_GetFBPulsePos error\n");
+			return FALSE;
+		}
+		Ros_CtrlGroup_ConvertToRosPos(controller->ctrlGroups[groupNo], _pulse_values, rtMsgSend.body.state[groupNo].pos_fb);
+
+		// commanded speed
+		if (!Ros_CtrlGroup_GetServoSpeed(controller->ctrlGroups[groupNo], _pulse_values)) 
+		{
+			Db_Print("[RT] Ros_CtrlGroup_GetServoSpeed error\n");
+			return FALSE;
+		}
+		Ros_CtrlGroup_ConvertToRosPos(controller->ctrlGroups[groupNo], _pulse_values, rtMsgSend.body.state[groupNo].vel_set);
+
+		// feedback speed
+		if(!Ros_CtrlGroup_GetFBServoSpeed(controller->ctrlGroups[groupNo], _pulse_values))
+		{
+			Db_Print("[RT] Ros_CtrlGroup_GetFBServoSpeed error\n");
 			return FALSE;	
 		}
-		Ros_CtrlGroup_ConvertToRosPos(controller->ctrlGroups[groupNo], statePulseSpeed, rtMsgSend.body.state[groupNo].vel);
+		Ros_CtrlGroup_ConvertToRosPos(controller->ctrlGroups[groupNo], _pulse_values, rtMsgSend.body.state[groupNo].vel_fb);
 		
 	}
 
@@ -547,7 +562,7 @@ static BOOL _Ros_RealTimeMotionServer_SetStateMsg(Controller* controller,
 
 static UINT8 _Ros_RealTimeMotionServer_SetMotion(Controller* controller, enum Ros_RealTimeMotionServer_Motion_t motionType)
 {
-	static const float MAX_INC_FACTOR = 0.2;	// #TODO set dynamically?
+	static const float MAX_INC_FACTOR = 0.5;	// #TODO set dynamically?
 	static enum Ros_RealTimeMotionServer_Motion_t RET;
 	static bool USE_PREV_VALUE;
 
@@ -942,7 +957,7 @@ static void Ros_RealTimeMotionServer_IncMoveLoopStart3(Controller* controller)
 			{
 				Ros_RealTimeMotionServer_SetState(STATE_RUN_IN, &rtState, &stateEntry);
 			}
-			else if(_Ros_RealTimeMotionServer_SetMotion(controller, RT_MOTION_STALL) == RT_MOTION_STOP)
+			else if(_Ros_RealTimeMotionServer_SetMotion(controller, RT_MOTION_STOP) == RT_MOTION_STOP)
 			{
 				Ros_RealTimeMotionServer_SetState(STATE_IDLE, &rtState, &stateEntry);
 			}
