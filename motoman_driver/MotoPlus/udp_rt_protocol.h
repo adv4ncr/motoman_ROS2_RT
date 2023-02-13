@@ -157,10 +157,19 @@ namespace motoman_hardware::udp_rt_message
 
 	struct _RtMsgBodyState
 	{
+		float pos_cmd[RT_ROBOT_JOINTS_MAX];
 		float pos_set[RT_ROBOT_JOINTS_MAX];
 		float pos_fb[RT_ROBOT_JOINTS_MAX];
+		float vel_cmd[RT_ROBOT_JOINTS_MAX];
 		float vel_set[RT_ROBOT_JOINTS_MAX];
 		float vel_fb[RT_ROBOT_JOINTS_MAX];
+		float acc_cmd[RT_ROBOT_JOINTS_MAX];
+		float acc_set[RT_ROBOT_JOINTS_MAX];
+
+		// Debug
+		unsigned char dbg_axs_sync_state[RT_ROBOT_JOINTS_MAX];
+		float dbg_loop_time;
+
 	} __attribute__((packed));
 	typedef struct _RtMsgBodyState RtMsgBodyState;
 
@@ -175,7 +184,7 @@ namespace motoman_hardware::udp_rt_message
 	{
 		RtMsgHeader header;
 		union RtMsgBody body;
-	} __attribute__((packed));
+	} __attribute__((packed, aligned(4)));
 	typedef struct _RtMsg RtMsg;
 	
 	// struct _RtMsgCommand
@@ -205,6 +214,7 @@ namespace motoman_hardware::udp_rt_message
 static_assert(sizeof(enum RtMsgState) == 1, "RtMsgState must be 1");
 static_assert(sizeof(enum RtMsgCode) == 1, "RtMsgCode must be 1");
 static_assert(sizeof(RtMsgHeader) == 4, "RtMsgHeader must be 4");
+static_assert(sizeof(RtMsg) == RT_MSG_STATE_SIZE, "RtMsg not aligned");
 
 #ifdef __cplusplus
 } // motoman_hardware::udp_rt_message

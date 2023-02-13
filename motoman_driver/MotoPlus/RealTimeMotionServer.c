@@ -55,7 +55,7 @@ BOOL Ros_RealTimeMotionServer_RealTimeMotionClientStop(Controller* controller);
 // Start the main control loop in real time mode
 //void Ros_RealTimeMotionServer_IncMoveLoopStart(Controller* controller);
 //void Ros_RealTimeMotionServer_IncMoveLoopStart2(Controller* controller);
-static void Ros_RealTimeMotionServer_IncMoveLoopStart3(Controller* controller);
+static void Ros_RealTimeMotionServer_IncMoveLoopStart(Controller* controller);
 
 // Simple messages
 //int Ros_RealTimeMotionServer_SimpleMsg_State(SimpleMsg* stateMsg, CtrlGroup* ctrlGroup, int sequence);
@@ -383,7 +383,7 @@ int Ros_RealTimeMotionServer_RealTimeMotionClientStart(
 
 		controller->tidIncMoveThread =
 				mpCreateTask(MP_PRI_IP_CLK_TAKE, MP_STACK_SIZE,
-										 (FUNCPTR)Ros_RealTimeMotionServer_IncMoveLoopStart3, // #TODO
+										 (FUNCPTR)Ros_RealTimeMotionServer_IncMoveLoopStart, // #TODO
 										 (int)controller, 0, 0, 0, 0, 0, 0, 0, 0, 0);
 		if (controller->tidIncMoveThread == ERROR) {
 			puts("[RT] Failed to create task for real time motion.  Check robot parameters.");
@@ -422,27 +422,51 @@ BOOL Ros_RealTimeMotionServer_RealTimeMotionClientStop(Controller* controller) {
 
 // ------------------ TYPE DECLARATIONS  ------------------
 
-// Internal motion states
+// Requested motion states
 enum Ros_RealTimeMotionServer_Motion_t
 {
 	RT_MOTION_UNDEFINED = 0,
 	RT_MOTION_SYNC = 1,
 	RT_MOTION_STOP = 2,
-	RT_MOTION_ACCELERATE,
-	RT_MOTION_DECELERATE,
 	RT_MOTION_STALL,
+	RT_MOTION_OUT_OF_SYNC,
 	RT_MOTION_ERROR,
 } __attribute__((__packed__));
+
+// Internal synchronisation states
+enum Ros_RealTimeMotionServer_SycStatus_t
+{
+    RT_SYNCSTATE_INIT_0 = 0,
+    RT_SYNCSTATE_INIT_1 = 1,
+    RT_SYNCSTATE_OUT_OF_SYNC = 2,
+    RT_SYNCSTATE_SYNCHRONIZING = 3,
+    RT_SYNCSTATE_IN_SYNC = 4,
+} __attribute__((__packed__));
+
+// Axis motion data for one control group
+typedef struct
+{
+    long prevPosCmd[RT_ROBOT_JOINTS_MAX];
+    long prevPosSet[RT_ROBOT_JOINTS_MAX];
+    long prevIncCmd[RT_ROBOT_JOINTS_MAX];
+    long prevIncSet[RT_ROBOT_JOINTS_MAX];
+    long prevAccCmd[RT_ROBOT_JOINTS_MAX];
+    long prevAccSet[RT_ROBOT_JOINTS_MAX];
+    double velSet[RT_ROBOT_JOINTS_MAX];
+	enum Ros_RealTimeMotionServer_SycStatus_t state[RT_ROBOT_JOINTS_MAX];
+} MoveData;
 
 
 // ------------------ STATIC GLOBAL VARIABLES  ------------------
 static UINT8 groupNo;							// Robot group number
 static UINT8 axisNo;							// Robot axis number
-static long pulsePos[RT_ROBOT_GROUPS][RT_ROBOT_JOINTS_MAX];			// Pulse position array
-static long pulsePosCmd[RT_ROBOT_GROUPS][RT_ROBOT_JOINTS_MAX];		// Pulse position command array
-static long pulseInc[RT_ROBOT_GROUPS][RT_ROBOT_JOINTS_MAX];			// Pulse increment array
-static MP_EXPOS_DATA moveData;					// Incremental move data
+//static long pulsePos[RT_ROBOT_GROUPS][RT_ROBOT_JOINTS_MAX];			// Pulse position array
+//static long pulsePosCmd[RT_ROBOT_GROUPS][RT_ROBOT_JOINTS_MAX];		// Pulse position command array
+//static long pulseInc[RT_ROBOT_GROUPS][RT_ROBOT_JOINTS_MAX];			// Pulse increment array
+static MoveData mData;
+static MP_EXPOS_DATA incData;					// Incremental move data
 //static enum Ros_RealTimeMotionServer_Motion_t motionRequest, motionResponse;
+
 // connection variables
 static struct sockaddr_in serverAddr, clientAddr;
 static int sizeofClientAddr;
@@ -452,11 +476,34 @@ static struct fd_set readFds;					// struct for handling socket file descriptor 
 static int udp_socket_fd;						// UDP server socket
 static RtMsg rtMsgRecv, rtMsgSend;				// Message variable
 
+// Maximum values
+static float MAX_INC_FACTOR;	// #TODO set dynamically?
+static float MAX_ACC_FACTOR;	// max_acc = 2*max_inc
 
+// Test variables
+static float sw_current;
+static bool DEMO_MODE = false;
+
+// #TODO remove
+static MoveData _mDataLog; // #TODO remove
+static void _update_log_msg_data()
+{
+	for(axisNo=0; axisNo<RT_ROBOT_JOINTS_MAX; axisNo++)
+	{
+		_mDataLog.prevPosCmd[axisNo] = mData.prevPosCmd[axisNo];
+		_mDataLog.prevPosSet[axisNo] = mData.prevPosSet[axisNo];
+		_mDataLog.prevIncCmd[axisNo] = mData.prevIncCmd[axisNo] * 250;			// Conversion step - s
+		_mDataLog.prevIncSet[axisNo] = mData.prevIncSet[axisNo] * 250;			// ...
+		_mDataLog.prevAccCmd[axisNo] = mData.prevAccCmd[axisNo] * 250 * 250;	// Conversion step² - s²
+ 		_mDataLog.prevAccSet[axisNo] = mData.prevAccSet[axisNo] * 250 * 250;	// ...
+		_mDataLog.velSet[axisNo] = mData.velSet[axisNo];
+		_mDataLog.state[axisNo] = mData.state[axisNo];
+	}
+}
 
 static void Ros_RealTimeMotionServer_SetState(enum RtMsgState new_state, enum RtMsgState *state, bool *entry)
 {
-	printf("[RT] SET STATE: %d\n", new_state);
+	Db_Print("[RT] SET STATE: %d\n", new_state);
 	*entry = true;
 	*state = new_state;
 }
@@ -512,6 +559,7 @@ static BOOL _Ros_RealTimeMotionServer_SetStateMsg(Controller* controller,
 	rtMsgSend.header.msg_state = *msg_state;
 	rtMsgSend.header.msg_code = *msg_code;
 	rtMsgSend.header.msg_sequence = *sequence;
+	//rtMsgSend.header.msg_
 
 	// set number of valid groups
 	// sendMsg->body.realTimeMotionJointStateEx.numberOfValidGroups =
@@ -523,15 +571,28 @@ static BOOL _Ros_RealTimeMotionServer_SetStateMsg(Controller* controller,
 		// sendMsg->body.realTimeMotionJointStateEx.jointStateData[groupNo].groupNo =
 		// 		groupNo;
 
-		// commanded position
-		if (!Ros_CtrlGroup_GetPulsePosCmd(controller->ctrlGroups[groupNo], _pulse_values)) 
-		{
-			Db_Print("[RT] Ros_CtrlGroup_GetPulsePosCmd error\n");
-			return FALSE;
-		}
-		Ros_CtrlGroup_ConvertToRosPos(controller->ctrlGroups[groupNo], _pulse_values, rtMsgSend.body.state[groupNo].pos_set);
+		// ------------------ POSITION ------------------
 
-		// feedback position
+		// Commanded position
+		Ros_CtrlGroup_ConvertToRosPos(controller->ctrlGroups[groupNo], _mDataLog.prevPosCmd, rtMsgSend.body.state[groupNo].pos_cmd);
+
+		// Set position
+		if (DEMO_MODE)
+		{
+			Ros_CtrlGroup_ConvertToRosPos(controller->ctrlGroups[groupNo], _mDataLog.prevPosSet, rtMsgSend.body.state[groupNo].pos_set);
+		}
+		else
+		{
+			if (!Ros_CtrlGroup_GetPulsePosCmd(controller->ctrlGroups[groupNo], _pulse_values)) 
+			{
+				Db_Print("[RT] Ros_CtrlGroup_GetPulsePosCmd error\n");
+				return FALSE;
+			}
+			Ros_CtrlGroup_ConvertToRosPos(controller->ctrlGroups[groupNo], _pulse_values, rtMsgSend.body.state[groupNo].pos_set);
+		}
+
+
+		// Feedback position
 		if (!Ros_CtrlGroup_GetFBPulsePos(controller->ctrlGroups[groupNo], _pulse_values)) 
 		{
 			Db_Print("[RT] Ros_CtrlGroup_GetFBPulsePos error\n");
@@ -539,15 +600,27 @@ static BOOL _Ros_RealTimeMotionServer_SetStateMsg(Controller* controller,
 		}
 		Ros_CtrlGroup_ConvertToRosPos(controller->ctrlGroups[groupNo], _pulse_values, rtMsgSend.body.state[groupNo].pos_fb);
 
-		// commanded speed
-		if (!Ros_CtrlGroup_GetServoSpeed(controller->ctrlGroups[groupNo], _pulse_values)) 
-		{
-			Db_Print("[RT] Ros_CtrlGroup_GetServoSpeed error\n");
-			return FALSE;
-		}
-		Ros_CtrlGroup_ConvertToRosPos(controller->ctrlGroups[groupNo], _pulse_values, rtMsgSend.body.state[groupNo].vel_set);
 
-		// feedback speed
+		// ------------------ VELOCITY ------------------
+
+		// // Set speed -> useless function, delayed and parse results
+		// if (!Ros_CtrlGroup_GetServoSpeed(controller->ctrlGroups[groupNo], _pulse_values)) 
+		// {
+		// 	Db_Print("[RT] Ros_CtrlGroup_GetServoSpeed error\n");
+		// 	return FALSE;
+		// }
+		// if (!DEMO_MODE)
+		// {
+		// 	Ros_CtrlGroup_ConvertToRosPos(controller->ctrlGroups[groupNo], _pulse_values, rtMsgSend.body.state[groupNo].vel_set);
+		// }
+
+		// Commanded speed
+		Ros_CtrlGroup_ConvertToRosPos(controller->ctrlGroups[groupNo], _mDataLog.prevIncCmd, rtMsgSend.body.state[groupNo].vel_cmd);
+		
+		// Set speed
+		Ros_CtrlGroup_ConvertToRosPos(controller->ctrlGroups[groupNo], _mDataLog.prevIncSet, rtMsgSend.body.state[groupNo].vel_set);
+
+		// Feedback speed
 		if(!Ros_CtrlGroup_GetFBServoSpeed(controller->ctrlGroups[groupNo], _pulse_values))
 		{
 			Db_Print("[RT] Ros_CtrlGroup_GetFBServoSpeed error\n");
@@ -555,128 +628,310 @@ static BOOL _Ros_RealTimeMotionServer_SetStateMsg(Controller* controller,
 		}
 		Ros_CtrlGroup_ConvertToRosPos(controller->ctrlGroups[groupNo], _pulse_values, rtMsgSend.body.state[groupNo].vel_fb);
 		
+		
+		// ------------------ ACCELERATION ------------------
+		
+		// // Send commanded acceleration -> this would be the commanded acceleration by the synchronisation algorithm, 
+		// // one step before the other pos / vel cmd values above.
+		// Ros_CtrlGroup_ConvertToRosPos(controller->ctrlGroups[groupNo], _mDataLog.prevAccCmd, rtMsgSend.body.state[groupNo].acc_cmd);
+
+		// Commanded acceleration
+		Ros_CtrlGroup_ConvertToRosPos(controller->ctrlGroups[groupNo], _mDataLog.prevAccCmd, rtMsgSend.body.state[groupNo].acc_cmd);
+
+		// Set acceleration
+		Ros_CtrlGroup_ConvertToRosPos(controller->ctrlGroups[groupNo], _mDataLog.prevAccSet, rtMsgSend.body.state[groupNo].acc_set);
+
+
+		// ------------------ ROBOT STATE ------------------
+
+		// #TODO necessary after testing?
+		for(axisNo = 0; axisNo < RT_ROBOT_JOINTS_MAX; axisNo++)
+		{
+			rtMsgSend.body.state[groupNo].dbg_axs_sync_state[axisNo] = (unsigned char)mData.state[axisNo];
+		}
+		
+		rtMsgSend.body.state[groupNo].dbg_loop_time = sw_current;
+
+
 	}
 
 	return TRUE;
 }
 
+/*
+Set robot motion.
+Returns: Ros_RealTimeMotionServer_Motion_t
+*/
 static UINT8 _Ros_RealTimeMotionServer_SetMotion(Controller* controller, enum Ros_RealTimeMotionServer_Motion_t motionType)
 {
-	static const float MAX_INC_FACTOR = 0.5;	// #TODO set dynamically?
+	const UINT8 groupNo = 0;	// Only for 1 controller group for now
+
+	// Local move data variables
+	static long posCmd[RT_ROBOT_JOINTS_MAX];
+	static long _pos_cmd = 0;
+	static long _inc_cmd = 0;
+	static long _inc_set = 0;
+	static UINT16 _INC_MAX = 0;
+	static long _acc_cmd = 0;
+	static long _acc_set = 0;
+	static UINT16 _ACC_MAX = 0;
+	static double _acc_clc = 0;
+	static double _acc_itc = 0;
+	static double _numerator, _denominator;
+
+	// Return value
 	static enum Ros_RealTimeMotionServer_Motion_t RET;
-	static bool USE_PREV_VALUE;
-
 	RET = RT_MOTION_UNDEFINED;
-	USE_PREV_VALUE = (motionType != RT_MOTION_SYNC && motionType != RT_MOTION_ACCELERATE) ? TRUE : FALSE;
+	
+	// ------------------ SET COMMAND INCREMENT ------------------
 
-	for (groupNo = 0; groupNo < controller->numGroup; groupNo++) 
+	// Convert command [RAD] values to [PULSE]
+	Ros_CtrlGroup_ConvertToMotoPos(controller->ctrlGroups[groupNo], rtMsgRecv.body.command[groupNo].pos, posCmd);
+	
+
+	// ------------------ CALCULATE MOTION ------------------
+	
+	for (axisNo = 0; axisNo < controller->ctrlGroups[groupNo]->numAxes; axisNo++)
 	{
-		// ------------------ SET MOTION ------------------
 
-		// convert command [RAD] values to [PULSE]
-		if(!USE_PREV_VALUE)
+		// Set commanded position
+		switch (motionType)
 		{
-			Ros_CtrlGroup_ConvertToMotoPos(controller->ctrlGroups[groupNo], rtMsgRecv.body.command[groupNo].pos, pulsePosCmd[groupNo]);
+		case RT_MOTION_SYNC:
+
+			// Position by new message
+			_pos_cmd = posCmd[axisNo];
+			// Set desired increment
+			_inc_cmd = _pos_cmd - mData.prevPosCmd[axisNo];
+			_inc_set = _pos_cmd - mData.prevPosSet[axisNo];
+			break;
+
+		case RT_MOTION_STALL:
+
+			// Position by last increment
+			_pos_cmd = mData.prevPosCmd[axisNo] + mData.prevIncCmd[axisNo];
+			// Set desired increment
+			_inc_cmd = _pos_cmd - mData.prevPosCmd[axisNo];
+			_inc_set = _pos_cmd - mData.prevPosSet[axisNo];
+			break;
+
+		case RT_MOTION_STOP:
+
+			// Position by last SET position (0 increment)
+			_pos_cmd = mData.prevPosSet[axisNo];
+			_inc_cmd = 0;
+			_inc_set = 0;
+			break;
+
+		default:
+			printf("[RT] SetMotion ERROR: undefined requested state %d\r\n", motionType);
+			return RT_MOTION_ERROR;
+			break;
 		}
 
-		// pulsePosCmd - setpoint
-		// pulsePos - last setpoint
-		// pulseInc - increments (setpoint - last setpoint) / velocity
-		
-		for (axisNo = 0; axisNo < controller->ctrlGroups[groupNo]->numAxes; axisNo++)
+		// Synchronize only if RT_SYNCSTATE not in INIT_X
+		if(mData.state[axisNo] > RT_SYNCSTATE_INIT_1)
 		{
-			// Calculate increment if sync motion or accelerating
+			// Set desired acceleration
+			_acc_cmd = _inc_cmd - mData.prevIncCmd[axisNo];
+			_acc_set = _inc_set - mData.prevIncSet[axisNo];
 
-			pulseInc[groupNo][axisNo] = pulsePosCmd[groupNo][axisNo] - pulsePos[groupNo][axisNo];
-		
+			// Get maximum values
+			_INC_MAX = (UINT16) (controller->ctrlGroups[groupNo]->maxInc.maxIncrement[axisNo] * MAX_INC_FACTOR);
+			_ACC_MAX = (UINT16) (2 * controller->ctrlGroups[groupNo]->maxInc.maxIncrement[axisNo] * MAX_ACC_FACTOR);
 
-			// Get max. increment of the current axis
-			static UINT32 maxInc;
-			maxInc = (UINT32) (controller->ctrlGroups[groupNo]->maxInc.maxIncrement[axisNo] * MAX_INC_FACTOR);
+			// --------- Approximate Sync ---------
+			
+			// First assumption
+			static bool _in_sync;
+			_in_sync = true;
 
-			// Switch motion types
-			switch (motionType)
+			// Check increment limit
+			if (abs(_inc_set) > _INC_MAX)
 			{
-			case RT_MOTION_SYNC:
-				// Default case
-				RET = RT_MOTION_SYNC;
-				break;
-			case RT_MOTION_ACCELERATE:
-				// Acceleration
-				if (abs(pulseInc[groupNo][axisNo]) > maxInc)
+				_in_sync = false;
+				_inc_set = _inc_set > 0 ? _INC_MAX : -_INC_MAX;
+				_acc_set = _inc_set - mData.prevIncSet[axisNo];
+			}
+
+			// Check acceleration limit
+			if (abs(_acc_set) > _ACC_MAX)
+			{
+				_in_sync = false;
+				_acc_set = _acc_set > 0 ? _ACC_MAX : -_ACC_MAX;
+				_inc_set = mData.prevIncSet[axisNo] + _acc_set;
+			}
+
+			// Check acceleration limit after one extrapolated step
+			if (abs(_inc_cmd-_inc_set) > _ACC_MAX)
+			{
+				_in_sync = false;
+			}
+
+			// Set state
+			if (_in_sync) {mData.state[axisNo] = RT_SYNCSTATE_IN_SYNC;}
+			else if (mData.state[axisNo] == RT_SYNCSTATE_IN_SYNC)
+			{
+				mData.state[axisNo] = RT_SYNCSTATE_OUT_OF_SYNC;
+			}
+
+			// --------- Out of sync ---------
+			if (mData.state[axisNo] == RT_SYNCSTATE_OUT_OF_SYNC)
+			{
+				_acc_clc = _inc_set > _inc_cmd ? -_ACC_MAX : _ACC_MAX;
+				//_acc_clc *= 1.0;		// #TODO set factor here?
+
+				
+				// Check synchronization condition
+				
+				// Prevent division by 0; Calculate denominator first
+				_denominator = 2*((mData.prevPosSet[axisNo]+_inc_set) - (_pos_cmd));
+
+				if (_denominator != 0)
 				{
-					pulseInc[groupNo][axisNo] = (pulseInc[groupNo][axisNo] > 0) ? maxInc : -maxInc;
-					RET = RT_MOTION_ACCELERATE;
+					_numerator = (_inc_set + _acc_set/2.) - (_inc_cmd + _acc_cmd/2.);
+					_acc_itc = _numerator*_numerator / _denominator;	// interception acceleration
 				}
-				// Less than operation prevents higher priority states (e.g. RT_MOTION_ACCELERATE) from getting overwritten
-				else if(RET < RT_MOTION_SYNC) RET = RT_MOTION_SYNC;
-				break;
-			case RT_MOTION_DECELERATE:
-				// Deceleration
-				if(pulseInc[groupNo][axisNo] != 0)
+				else {_acc_itc = 0;}
+
+				// Check synchronisation start condition
+				if((_acc_clc > 0 && _acc_itc > _acc_clc) || (_acc_clc < 0 && _acc_itc < _acc_clc))
 				{
-					if (abs(pulseInc[groupNo][axisNo]) < maxInc) 
-					{ 
-						pulseInc[groupNo][axisNo] = 0; 
-					}
-					else
+					mData.state[axisNo] = RT_SYNCSTATE_SYNCHRONIZING;
+					// Set start velocity for synchronisation phase
+					mData.velSet[axisNo] = (_inc_set + mData.prevIncSet[axisNo])/2.0;
+				}
+			}
+
+			// --------- Synchronizing ---------
+			if (mData.state[axisNo] == RT_SYNCSTATE_SYNCHRONIZING)
+			{
+				// Prevent division by 0; Calculate denominator first
+				_denominator = 2*((mData.prevPosSet[axisNo]) - (mData.prevPosCmd[axisNo]));
+
+				if (_denominator != 0)
+				{
+					_numerator = (mData.velSet[axisNo]) - (_inc_cmd - _acc_cmd/2.);
+					_acc_itc = _numerator*_numerator / _denominator;	// interception acceleration
+				}
+				else {_acc_itc = 0;}
+
+				// Exit if not expedient
+				// Condition: ((_inc_set > _inc_cmd) XOR (_acc_itc < 0)) OR _acc_itc < 1
+				if ( (((mData.velSet[axisNo] + _acc_itc/2.) > _inc_cmd) != (_acc_itc < 0)) || abs(_acc_itc) < 1)
+				{
+					//printf("[RT] [EXIT_SYC] axisNo: %d", axisNo);
+					mData.state[axisNo] = RT_SYNCSTATE_OUT_OF_SYNC;
+				}
+				// Else set new interception values
+				else 
+				{
+					_inc_set = mData.velSet[axisNo] + _acc_itc/2.;
+					_acc_set = _inc_set - mData.prevIncSet[axisNo];
+					mData.velSet[axisNo] += _acc_itc;
+
+					// Check max. increment
+					if (abs(_inc_set) > _INC_MAX)
 					{
-						pulseInc[groupNo][axisNo] = (pulseInc[groupNo][axisNo] > 0) ? -maxInc : maxInc;
+						_inc_set = _inc_set > 0 ? _INC_MAX : -_INC_MAX;
+						_acc_set = _inc_set - mData.prevIncSet[axisNo];
+						mData.velSet[axisNo] = _inc_set + _acc_set/2;
 					}
-					
-					RET = RT_MOTION_DECELERATE;
+					// Check max. acceleration
+					if (abs(_acc_set) > _ACC_MAX)
+					{
+						_acc_set = _acc_set > 0 ? _ACC_MAX : -_ACC_MAX;
+						_inc_set = mData.prevIncSet[axisNo] + _acc_set;
+						mData.velSet[axisNo] = _inc_set + _acc_set/2;
+					}
 				}
-				else if(RET < RT_MOTION_STOP) RET = RT_MOTION_STOP;
-				break;
-			case RT_MOTION_STALL:
-				// For now -> Keep last increment values (USE_PREV_VALUE is true)
-				RET = RT_MOTION_STALL;
-				break;
-			case RT_MOTION_STOP:
-				// Stopping
-				pulseInc[groupNo][axisNo] = 0;
-				RET = RT_MOTION_STOP;
-				break;
-			default:
-				printf("[RT] unknown motion request: %d\n", motionType);
-				return RT_MOTION_ERROR;
-				break;
 			}
-
-			// Set increment to actual robot move variable
-			if(axisNo == 5) // TEST #TODO REMOVE
-			{
-				moveData.grp_pos_info[groupNo].pos[axisNo] = pulseInc[groupNo][axisNo];
-			}
-			// Set new setpoint value
-			pulsePos[groupNo][axisNo] += pulseInc[groupNo][axisNo];
-
+		}
+		else // mData.state[axisNo] <= RT_SYNCSTATE_INIT_1
+		{
+			// Set increment by last increment
+			_inc_set = mData.prevIncSet[axisNo];
+			// Next state (diry solution)
+			mData.state[axisNo]++;
 		}
 
-		// TEST #TODO REMOVE
-		static BOOL _printInc;
-		_printInc = FALSE;
-		for (axisNo = 0; axisNo < controller->ctrlGroups[groupNo]->numAxes; axisNo++)
-			if(USE_PREV_VALUE && pulseInc[groupNo][axisNo] != 0) _printInc = TRUE;
-		if(_printInc)
-			printf("[RT] P: %ld %ld %ld %ld %ld %ld\n",
-				pulseInc[groupNo][0], pulseInc[groupNo][1], pulseInc[groupNo][2], 
-				pulseInc[groupNo][3], pulseInc[groupNo][4], pulseInc[groupNo][5]);
+		// --------- Set robot increment ---------
+
+		// Set increment to actual robot move variable
+		if(axisNo == 5) // TEST #TODO REMOVE
+		{
+			incData.grp_pos_info[groupNo].pos[axisNo] = _inc_set;
+		}
+
+		// --------- Set previous values ---------
+		mData.prevPosCmd[axisNo] = _pos_cmd;
+		mData.prevIncCmd[axisNo] = _inc_cmd;
+		mData.prevPosSet[axisNo] += _inc_set;
+		mData.prevIncSet[axisNo] = _inc_set;
+		mData.prevAccCmd[axisNo] = _acc_cmd;
+		mData.prevAccSet[axisNo] = _acc_set;
+
 
 	}
+
+	// ------------------ SET RETURN VALUE ------------------
+	for (axisNo = 0; axisNo < controller->ctrlGroups[groupNo]->numAxes; axisNo++)
+	{
+		switch (motionType)
+		{
+		case RT_MOTION_SYNC:
+			if(RET < RT_MOTION_OUT_OF_SYNC && mData.state[axisNo] != RT_SYNCSTATE_IN_SYNC) 
+				{ RET = RT_MOTION_OUT_OF_SYNC; }
+			else if(RET < RT_MOTION_SYNC)
+				{ RET = RT_MOTION_SYNC; }
+			break;
+
+		case RT_MOTION_STOP:
+			if(RET < RT_MOTION_OUT_OF_SYNC && mData.state[axisNo] != RT_SYNCSTATE_IN_SYNC) 
+				{ RET = RT_MOTION_OUT_OF_SYNC; }
+			else if(RET < RT_MOTION_STOP && mData.prevIncSet == 0) 
+				{ RET = RT_MOTION_STOP; }
+			else if(RET < RT_MOTION_SYNC)
+				{ RET = RT_MOTION_SYNC; }
+			break;
+
+		case RT_MOTION_STALL:
+			if(RET < RT_MOTION_OUT_OF_SYNC && mData.state[axisNo] != RT_SYNCSTATE_IN_SYNC) 
+				{ RET = RT_MOTION_OUT_OF_SYNC; }
+			else if(RET < RT_MOTION_STALL)
+				{ RET = RT_MOTION_STALL; }
+			break;
+		
+		default:
+			break;
+		}
+	}
+
+	// ------------------ TEST PRINT #TODO remove ------------------
+	// TEST #TODO REMOVE
+	static BOOL _printInc;
+	_printInc = FALSE;
+	for (axisNo = 0; axisNo < controller->ctrlGroups[groupNo]->numAxes; axisNo++)
+		if(mData.prevIncSet[axisNo] != 0) _printInc = TRUE;
+	if(_printInc)
+		printf("[RT] P: %ld %ld %ld %ld %ld %ld\n",
+			mData.prevIncSet[0], mData.prevIncSet[1], mData.prevIncSet[2], 
+			mData.prevIncSet[3], mData.prevIncSet[4], mData.prevIncSet[5]);
+
+
 
 	// ------------------ MOVE ROBOT ------------------
 
 	if (Ros_Controller_IsMotionReady(controller) && !controller->bStopMotion) 
 	{
 		static int mpRet;
-		mpRet = mpExRcsIncrementMove(&moveData);
+		mpRet = mpExRcsIncrementMove(&incData);
 		// Error
 		if (mpRet != 0) {
 			if (mpRet == -3) 
 			{
-				printf("[RT] mpExRcsIncrementMove ERROR: %d (ctrl_grp = % d)\r\n",
-					mpRet, moveData.ctrl_grp);
+				printf("[RT] mpExRcsIncrementMove ERROR: %d (ctrl_grp = % ld)\r\n",
+					mpRet, incData.ctrl_grp);
 			}
 			else 
 			{
@@ -691,16 +946,17 @@ static UINT8 _Ros_RealTimeMotionServer_SetMotion(Controller* controller, enum Ro
 	return RET;
 }
 
+
 //-----------------------------------------------------------------------
-// Real time Incremental Move Loop 3 -- main
+// Real time Incremental Move Loop -- main
 //-----------------------------------------------------------------------
-static void Ros_RealTimeMotionServer_IncMoveLoopStart3(Controller* controller)
+static void Ros_RealTimeMotionServer_IncMoveLoopStart(Controller* controller)
 {
 	// Consistency check of defined udp_rt_protocol macros and physical setup
 	if(controller->numGroup != RT_ROBOT_GROUPS)
 	{
 		printf("[RT] %d control groups configured. Supported: %d\n", controller->numGroup, RT_ROBOT_GROUPS);
-		puts("[RT] Change udp_rt_protocol.h and recompile");
+		puts("[RT] Ask your friendly local software engineer to upgrade the code to support multiple control groups");
 		goto exitTask;
 	}
 	for (groupNo = 0; groupNo < controller->numGroup; groupNo++) 
@@ -722,26 +978,39 @@ static void Ros_RealTimeMotionServer_IncMoveLoopStart3(Controller* controller)
 	static enum RtMsgCode msgCode = CODE_UNDEFINED;		// Message code sent to host
 	static unsigned short timeoutCounter = 0;			// Missed messages
 	static unsigned char sequence = 0;					// Current message sequence
+	static enum Ros_RealTimeMotionServer_Motion_t motionRet = RT_MOTION_UNDEFINED;
 	// state machine variables
 	static enum RtMsgState rtState;
 	static bool stateEntry;
+
+	// Stop watch #TODO remove after testing
+	void * stopWatch = mpStopWatchCreate(251);	// stopWatch
+	mpStopWatchReset(stopWatch);				// stopWatch
+	//mpStopWatchStart(stopWatch);				// stopWatch
+	sw_current = 0;
+	//static UINT8 sw_counter  = 0;
+	//static float sw_results[250];
+	//static double sw_final_result = 0;
+	//memset(sw_results, 0, 250);
+
 	
-	// Clear pulse arrays
+
+	
+	// Clear move data struct
 	for (groupNo = 0; groupNo < controller->numGroup; groupNo++)
 	{
-		memset(pulsePos[groupNo], 0, RT_ROBOT_JOINTS_MAX * sizeof(long));
-		memset(pulsePosCmd[groupNo], 0, RT_ROBOT_JOINTS_MAX * sizeof(long));
-		memset(pulseInc[groupNo], 0, RT_ROBOT_JOINTS_MAX * sizeof(long));	
+		memset(&mData, 0, sizeof(MoveData));
+		memset(&_mDataLog, 0, sizeof(MoveData));	// #TODO remove
 	}
 
 	// Set movedata
-	memset(&moveData, CLEAR, sizeof(MP_EXPOS_DATA));
+	memset(&incData, CLEAR, sizeof(MP_EXPOS_DATA));
 	for (groupNo = 0; groupNo < controller->numGroup; groupNo++)
 	{
-		moveData.ctrl_grp |= (0x01 << groupNo);
-		moveData.grp_pos_info[groupNo].pos_tag.data[0] = Ros_CtrlGroup_GetAxisConfig(controller->ctrlGroups[groupNo]);
-		//moveData.grp_pos_info[i].pos_tag.data[3] = MP_INC_ANGLE_DTYPE; // Control with pulse increments
-		moveData.grp_pos_info[groupNo].pos_tag.data[3] = MP_INC_PULSE_DTYPE;
+		incData.ctrl_grp |= (0x01 << groupNo);
+		incData.grp_pos_info[groupNo].pos_tag.data[0] = Ros_CtrlGroup_GetAxisConfig(controller->ctrlGroups[groupNo]);
+		//incData.grp_pos_info[i].pos_tag.data[3] = MP_INC_ANGLE_DTYPE; // Control with pulse increments
+		incData.grp_pos_info[groupNo].pos_tag.data[3] = MP_INC_PULSE_DTYPE;
 		// #TODO not set: tool info[2], user coordinate sys[4], 
 	}
 
@@ -795,13 +1064,20 @@ static void Ros_RealTimeMotionServer_IncMoveLoopStart3(Controller* controller)
 	
 	// ------------------ START CONTROLLER ------------------
 
+	// Set maximum values hardcoded #TODO
+	MAX_INC_FACTOR = 0.5;
+	MAX_ACC_FACTOR = 0.05;
+
 	// Ensure that the motion is not stopped on the controller
 	controller->bStopMotion = FALSE;
 	
 	// Start Trajectory mode by starting the INIT_ROS job on the controller
 	static BOOL bRet; // #TODO remove bool, move function to if()
 	bRet = Ros_RealTimeMotionServer_StartTrajMode(controller);
-	//bRet = TRUE; // TEST #TODO REMOVE
+	
+	DEMO_MODE = !bRet;
+	if(DEMO_MODE) { printf("[RT] ----------- DEMO_MODE activated -----------\n"); }
+	bRet = TRUE; // TEST #TODO REMOVE
 
 	// clear message
 	memset(&rtMsgSend, CLEAR, RT_MSG_STATE_SIZE);
@@ -856,16 +1132,22 @@ static void Ros_RealTimeMotionServer_IncMoveLoopStart3(Controller* controller)
 
 		// --------- receive cmd from pc ---------
 		msgReceived = _Ros_RealTimeMotionServer_GetUdpMsg();
+		
+		mpStopWatchStart(stopWatch);	// stopWatch
+
 		if(!msgReceived)
 		{	
 			// failed to receive message
+			if(timeoutCounter % 125 == 0) { Db_Print("[RT] GetUdpMsg timeout %d\n", timeoutCounter); }
+
 			timeoutCounter++;
-			Db_Print("[RT] GetUdpMsg timeout %d\n", timeoutCounter);
 		}
 		else
 		{
 			timeoutCounter = 0;
 		}
+
+
 
 		// reset message code
 		msgCode = CODE_UNDEFINED;
@@ -880,11 +1162,10 @@ static void Ros_RealTimeMotionServer_IncMoveLoopStart3(Controller* controller)
 				// Set initial joint angles
 				for(groupNo = 0; groupNo < controller->numGroup; groupNo++)
 				{
-					if(!Ros_CtrlGroup_GetPulsePosCmd(controller->ctrlGroups[groupNo], pulsePos[groupNo]))
-					{
-						Db_Print("[RT] Failed to get PulsePosCmd\n");
-						// Error handling? // #TODO
-					}
+					if(!Ros_CtrlGroup_GetPulsePosCmd(controller->ctrlGroups[groupNo], mData.prevPosCmd))
+					{ Db_Print("[RT] Failed to get PulsePosCmd\n"); }
+					if(!Ros_CtrlGroup_GetPulsePosCmd(controller->ctrlGroups[groupNo], mData.prevPosSet))
+					{ Db_Print("[RT] Failed to get PulsePosCmd\n"); }
 				}
 				//Db_Print("[RT] state entry %d", rtState);
 				stateEntry = false;
@@ -893,7 +1174,7 @@ static void Ros_RealTimeMotionServer_IncMoveLoopStart3(Controller* controller)
 			// Exit
 			if(msgReceived)
 			{
-				Ros_RealTimeMotionServer_SetState(STATE_RUN_IN, &rtState, &stateEntry);
+				Ros_RealTimeMotionServer_SetState(STATE_RUN, &rtState, &stateEntry);
 			}
 			break;
 
@@ -901,17 +1182,36 @@ static void Ros_RealTimeMotionServer_IncMoveLoopStart3(Controller* controller)
 			// Nominal robot operation
 			if(stateEntry)
 			{
+				// Skip all old messages
+				if(rtMsgRecv.header.msg_sequence != sequence)
+				{
+					static UINT8 _i;
+					for(_i = 0u; _i < 255 * sizeof(rtMsgRecv.header.msg_sequence); _i++)
+					{
+						Db_Print("[RT] Fixing sequence. Recv: %d. Actual: %d\n", 
+							rtMsgRecv.header.msg_sequence, sequence);
+						_Ros_RealTimeMotionServer_GetUdpMsg();
+						if(rtMsgRecv.header.msg_sequence == sequence) {break;}
+						else if(_i == 254) 
+						{
+							printf("[RT] failed to get latest message. Sequence: %d MsgSequence: %d\n",
+								sequence, rtMsgRecv.header.msg_sequence);
+							goto exitTask;
+						}
+					}
+				}
 				stateEntry = false;
 			}
 
 			// Exit on missing msg
 			if(!msgReceived)
 			{
+				motionRet = _Ros_RealTimeMotionServer_SetMotion(controller, RT_MOTION_STALL);
 				Ros_RealTimeMotionServer_SetState(STATE_RUN_STALL, &rtState, &stateEntry);
 			}
 			else
 			{
-				_Ros_RealTimeMotionServer_SetMotion(controller, RT_MOTION_SYNC);
+				motionRet = _Ros_RealTimeMotionServer_SetMotion(controller, RT_MOTION_SYNC);
 			}
 
 			break;
@@ -934,11 +1234,11 @@ static void Ros_RealTimeMotionServer_IncMoveLoopStart3(Controller* controller)
 				stateEntry = false;
 			}
 
-			_Ros_RealTimeMotionServer_SetMotion(controller, RT_MOTION_STALL);
+			motionRet = _Ros_RealTimeMotionServer_SetMotion(controller, RT_MOTION_STALL);
 
 			if(msgReceived)
 			{
-				Ros_RealTimeMotionServer_SetState(STATE_RUN_IN, &rtState, &stateEntry);
+				Ros_RealTimeMotionServer_SetState(STATE_RUN, &rtState, &stateEntry);
 			}
 			else if(timeoutCounter > 100) // Random value, test #TODO
 			{
@@ -953,56 +1253,57 @@ static void Ros_RealTimeMotionServer_IncMoveLoopStart3(Controller* controller)
 				stateEntry = false;
 			}
 
+			motionRet = _Ros_RealTimeMotionServer_SetMotion(controller, RT_MOTION_STOP);
+
 			if(msgReceived)
 			{
-				Ros_RealTimeMotionServer_SetState(STATE_RUN_IN, &rtState, &stateEntry);
+				Ros_RealTimeMotionServer_SetState(STATE_RUN, &rtState, &stateEntry);
 			}
-			else if(_Ros_RealTimeMotionServer_SetMotion(controller, RT_MOTION_STOP) == RT_MOTION_STOP)
+			else if(motionRet == RT_MOTION_STOP)
 			{
+
 				Ros_RealTimeMotionServer_SetState(STATE_IDLE, &rtState, &stateEntry);
 			}
 
 			break;
 		
-		case STATE_RUN_IN:
-			// Accelerate to synchronized motion
-			if(stateEntry)
-			{
-				// Is there a better way to handle this? E.g. small input buffer on host #TODO
-				// Skipp all old msgs
-				static UINT8 _tryCounter;
-				_tryCounter = 0;
-				while (rtMsgRecv.header.msg_sequence != sequence)
-				{
-					Db_Print("[RT] Fixing sequence. Recv: %d. Actual: %d\n", 
-						rtMsgRecv.header.msg_sequence, sequence);
+		// case STATE_RUN_IN:
+		// 	// Accelerate to synchronized motion
+		// 	if(stateEntry)
+		// 	{
+		// 		// Is there a better way to handle this? E.g. small input buffer on host #TODO
+		// 		// Skip all old msgs
+		// 		static UINT8 _tryCounter;
+		// 		_tryCounter = 0;
+		// 		while (rtMsgRecv.header.msg_sequence != sequence)
+		// 		{
+		// 			Db_Print("[RT] Fixing sequence. Recv: %d. Actual: %d\n", 
+		// 				rtMsgRecv.header.msg_sequence, sequence);
 					
-					if(_tryCounter > 100) // Random value, test #TODO
-					{
-						printf("[RT] failed to get latest message. Sequence: %d MsgSequence: %d\n",
-							sequence, rtMsgRecv.header.msg_sequence);
-						goto exitTask;
-					}
-					_Ros_RealTimeMotionServer_GetUdpMsg();
-					_tryCounter++;
-				}
+		// 			if(_tryCounter > 100) // Random value, test #TODO
+		// 			{
+		// 				printf("[RT] failed to get latest message. Sequence: %d MsgSequence: %d\n",
+		// 					sequence, rtMsgRecv.header.msg_sequence);
+		// 				goto exitTask;
+		// 			}
+		// 			_Ros_RealTimeMotionServer_GetUdpMsg();
+		// 			_tryCounter++;
+		// 		}
 
-				stateEntry = false;
-			}
+		// 		stateEntry = false;
+		// 	}
 
 
-			// Exit on all axes in sync
-			if(_Ros_RealTimeMotionServer_SetMotion(controller, RT_MOTION_ACCELERATE) == RT_MOTION_SYNC)
-			{
-				Ros_RealTimeMotionServer_SetState(STATE_RUN, &rtState, &stateEntry);
-			}
-			// Exit on missing msg
-			else if(!msgReceived)
-			{
-				Ros_RealTimeMotionServer_SetState(STATE_RUN_STALL, &rtState, &stateEntry);
-			}
-
-			break;
+		// 	// Exit on all axes in sync
+		// 	if(_Ros_RealTimeMotionServer_SetMotion(controller, RT_MOTION_ACCELERATE) == RT_MOTION_SYNC)
+		// 	{
+		// 		Ros_RealTimeMotionServer_SetState(STATE_RUN, &rtState, &stateEntry);
+		// 	}
+		// 	// Exit on missing msg
+		// 	else if(!msgReceived)
+		// 	{
+		// 		Ros_RealTimeMotionServer_SetState(STATE_RUN_STALL, &rtState, &stateEntry);
+		// 	}
 
 		default:
 			// catching all unused states, should never happen with rtState
@@ -1011,13 +1312,39 @@ static void Ros_RealTimeMotionServer_IncMoveLoopStart3(Controller* controller)
 			break;
 		}
 
+		
+		// sw_results[sw_counter++] = sw_current_iter;
+		// if(sw_current_iter > 0.2)
+		// {
+		// 	printf("[RT] SW peak: %f ms\n\r", sw_current_iter);
+		// }
+		
+		// if(sw_counter == 250)
+		// {
+		// 	sw_final_result = 0;
+		// 	for(sw_counter = 0; sw_counter<250; sw_counter++)
+		// 	{
+		// 		sw_final_result += sw_results[sw_counter];
+		// 	}
+		// 	sw_final_result /= 250.0;
+		// 	printf("[RT] SW final result: %lf ms\n\r", sw_final_result);
+		// 	sw_counter = 0;
+		// 	memset(sw_results, 0, 250);
+		// }
+
+		mpStopWatchStop(stopWatch);		// stopWatch
+		sw_current = mpStopWatchGetTime(stopWatch);
 
 		// --------- send state to pc ---------
 
-		//if(msgReceived) // #TODO
+		// #TODO remove
+		_update_log_msg_data();
+
 		sequence++;
 		_Ros_RealTimeMotionServer_SetStateMsg(controller, &rtState, &msgCode, &sequence);
 		_Ros_RealTimeMotionServer_SendUdpMsg();
+
+
 
 
 
@@ -1034,341 +1361,11 @@ exitTask:
 	mpClose(udp_socket_fd);
 	// Delete this task
 	controller->tidIncMoveThread = INVALID_TASK;
-	puts("[RT] Deleting RealTimeMotion server inc 3 task");
+	puts("[RT] Deleting RealTimeMotion server inc task");
 	mpDeleteSelf;
 
 }
 
-
-
-
-//-----------------------------------------------------------------------
-// Real time Incremental Move Loop 2 -- test
-//-----------------------------------------------------------------------
-// void Ros_RealTimeMotionServer_IncMoveLoopStart2(Controller* controller)  //<-- IP_CLK priority task
-// {
-// 	UINT8 groupNo;							// Robot group number
-// 	UINT8 axisNo;
-// 	long pulsePos[MAX_PULSE_AXES];			// Pulse position array
-// 	//long pulsePosTmp[MAX_PULSE_AXES];	// REMOVE #TEST2
-// 	long pulsePosCmd[MAX_PULSE_AXES];		// Pulse position command array
-// 	long pulseInc[MAX_PULSE_AXES];			// Pulse increment array
-// 	INT8 init_motion = 0;					// Initial position alignment check
-// 	struct timeval tv;						// Define UDP read timeout
-// 	struct fd_set readFds;					// struct for handling socket file descriptor state
-	
-// 	// Ensure that the motion is not stopped on the controller
-// 	controller->bStopMotion = FALSE;
-
-// 	//float interpolPeriodSec = (float)controller->interpolPeriod * 0.001;	// interpolation period [sec]
-
-// 	// State and command messages
-// 	SimpleMsg stateMsg;						// struct SimpleMsg state variable
-// 	SimpleMsg commandMsg;					// struct SimpleMsg command variable
-// 	// state message size
-// 	const unsigned int stateMsgSize = sizeof(SmPrefix) + sizeof(SmHeader) + sizeof(SmBodyMotoRealTimeMotionJointStateEx);
-
-// 	// UDP server socket
-// 	int udp_socket_fd;
-// 	if ((udp_socket_fd = mpSocket(AF_INET, SOCK_DGRAM, 0)) < 0)
-// 	{
-// 		printf("[RT] UDP socket creation failed. ERRNO: %d\n", errno); // #TODO better exit?
-// 		goto exitTask;
-// 	}
-
-// 	// Set up UDP server structure
-// 	struct sockaddr_in serverAddr, clientAddr;
-// 	int sizeofClientAddr = sizeof(clientAddr);
-// 	memset(&serverAddr, CLEAR, sizeof(serverAddr));
-// 	memset(&clientAddr, CLEAR, sizeof(clientAddr));
-
-// 	serverAddr.sin_family = AF_INET;
-// 	serverAddr.sin_addr.s_addr = INADDR_ANY;
-// 	serverAddr.sin_port = mpHtons(REALTIME_MOTION_UDP_PORT);
-
-// 	// Bind server port
-// 	if (mpBind(udp_socket_fd, (struct sockaddr *)&serverAddr, sizeof(serverAddr)) < 0)
-// 	{
-// 		printf("[RT] UDP bind failed. ERRNO: %d\n", errno);
-// 		mpClose(udp_socket_fd);
-// 		goto exitTask;
-// 	}
-
-// 	int bytesRecv;							// UDP received bytes
-// 	int bytesSend;							// UDP sent bytes
-
-
-// 	// ------------------ GET CLIENT INFORMATION ------------------
-// 	FD_ZERO(&readFds);
-// 	FD_SET(udp_socket_fd, &readFds);
-// 	tv.tv_sec = 10; tv.tv_usec = 0;
-// 	if (mpSelect(udp_socket_fd + 1, &readFds, NULL, NULL, &tv) <= 0)
-// 	{
-// 		printf("[RT] UDP request error or timeout %ld s\n", tv.tv_sec);
-// 		goto exitTask;
-// 	}
-
-// 	char buf[1];
-// 	UINT32 testRunSec = 0; // #TEST1
-// 	bytesRecv = mpRecvFrom(udp_socket_fd, buf, 1, 0, (struct sockaddr *)&clientAddr, &sizeofClientAddr);
-// 	if(bytesRecv < 0)
-// 	{
-// 		printf("[RT] UDP request client failed. ERRNO: %d\n", errno);
-// 		goto exitTask;
-// 	}
-// 	else // successful
-// 	{
-// 		char str[INET_ADDRSTRLEN];
-// 		mpInetNtoaB(clientAddr.sin_addr, str);
-// 		printf("[RT] setting client IP: %s\n", str);
-// 	}
-// 	testRunSec = (unsigned char)buf[0] * 250;
-
-
-
-// 	// ------------------ START CONTROLLER ------------------
-// 	// Start Trajectory mode by starting the INIT_ROS job on the controller
-// 	BOOL bRet = Ros_RealTimeMotionServer_StartTrajMode(controller);
-// 	//BOOL bRet = TRUE; // #TODO remove #TEST1
-// 	if (bRet)
-// 	{
-// 		Db_Print("[RT] controller active.\n");
-// 		buf[0] = 0; // #TODO send more meaningful message
-// 		bytesSend = mpSendTo(udp_socket_fd, buf, sizeof(buf), 0, (struct sockaddr *)&clientAddr, sizeof(clientAddr));
-// 	}
-// 	else
-// 	{
-// 		Db_Print("[RT] failed to start controller. Exit.\n");
-// 		buf[0] = 1; // #TODO send more meaningful message
-// 		bytesSend = mpSendTo(udp_socket_fd, buf, sizeof(buf), 0, (struct sockaddr *)&clientAddr, sizeof(clientAddr));
-// 		goto exitTask;
-// 		// #TODO report to PC
-// 	}
-
-// 	// reply to confirm controller state
-
-
-// 	// ------------------ VARIABLES ------------------
-// 	// better move to other section? page faults due to memory locking? 
-
-// 	// Timeout counter for late packages from external control client
-// 	int timeoutCounter = 0;
-// 	UINT32 runCounter = 0;
-
-// 	// Message id (sequence) that is incremented in each iteration #TODO set to e.g. uint_8t
-// 	int sequence = 0;
-
-
-// 	MP_EXPOS_DATA moveData;					// Incremental move data
-// 	memset(&moveData, CLEAR, sizeof(MP_EXPOS_DATA));
-
-// 	int i;
-// 	for (i = 0; i < controller->numGroup; i++)
-// 	{
-// 		moveData.ctrl_grp |= (0x01 << i);
-// 		moveData.grp_pos_info[i].pos_tag.data[0] = Ros_CtrlGroup_GetAxisConfig(controller->ctrlGroups[i]);
-// 		// Control with pulse increments
-// 		//moveData.grp_pos_info[i].pos_tag.data[3] = MP_INC_ANGLE_DTYPE;
-// 		moveData.grp_pos_info[i].pos_tag.data[3] = MP_INC_PULSE_DTYPE;
-// 		// #TODO not set: tool info[2], user coordinate sys[4], 
-// 	}
-
-// 	// Set mode to velocity control for now #TODO hardcoded mode
-// 	MotoRealTimeMotionMode mode = MOTO_REALTIME_MOTION_MODE_JOINT_POSITION;
-
-// 	// RT loop variables
-// 	tv.tv_sec = 0;
-// 	tv.tv_usec = REALTIME_MOTION_TIMEOUT_MS * 1000;
-// 	SmBodyMotoRealTimeMotionJointCommandEx* command;	// MotionJointCommandEx pointer
-
-// 	// plot parameters
-// 	Ros_RealTimeMotionServer_PrintParams(controller);
-
-// 	// print prev pulses
-// 	Ros_RealTimeMotionServer_PrintPrevPos(controller);
-
-// 	// print start message
-// 	printf("[RT] Starting control loop 2 with cycle time: %u ms\n", controller->interpolPeriod);
-
-
-// 	// ------------------ MOTION LOOP ------------------
-
-// 	while (timeoutCounter < REALTIME_MOTION_TIMEOUT_COUNTER_MAX &&
-// 		runCounter < testRunSec && // #TEST1
-// 		//Ros_Controller_IsMotionReady(controller) && // #TEST1
-// 		!controller->bStopMotion) 
-// 	{
-
-// 		// Sync with the interpolation clock
-// 		if (mpClkAnnounce(MP_INTERPOLATION_CLK) < 0) Db_Print("[RT] TASK TIMEOUT\n");
-
-// 		// Populate state message and send to server
-		
-// 		memset(&stateMsg, CLEAR, stateMsgSize);
-// 		if (Ros_RealTimeMotionServer_MotoRealTimeMotionJointStateEx(controller, sequence, mode, &stateMsg) > 0)
-// 		{
-// 			bytesSend = mpSendTo(udp_socket_fd, (char*)&stateMsg, stateMsgSize, 0, (struct sockaddr *)&clientAddr, sizeof(clientAddr));
-// 		}
-
-
-// 		// Clear
-// 		FD_ZERO(&readFds);
-// 		FD_SET(udp_socket_fd, &readFds);
-
-// 		// Recieve command message with timeout 
-// 		if (mpSelect(udp_socket_fd + 1, &readFds, NULL, NULL, &tv) > 0)
-// 		{
-// 			memset(&commandMsg, CLEAR, sizeof(SimpleMsg));
-// 			bytesRecv = mpRecv(udp_socket_fd, (char*)&commandMsg, sizeof(SimpleMsg), 0);
-// 			if (bytesRecv < 0) 
-// 			{
-// 				printf("[RT] mpRecv ERRNO: %d\n", errno);
-// 				break;
-// 			}
-// 			// set command
-// 			command = &commandMsg.body.realTimeMotionJointCommandEx;
-
-// 			// The received sequence number should match the state sequence number sent in the same cycle
-// 			if (stateMsg.body.realTimeMotionJointStateEx.messageId == command->messageId)
-// 			{
-				
-// 				// check if first command sent is equal to start position
-// 				if (init_motion == 0)
-// 				{
-// 					for (groupNo = 0; groupNo < controller->numGroup; groupNo++) {
-// 						// get current actual pos in ticks
-// 						Ros_CtrlGroup_GetFBPulsePos(controller->ctrlGroups[groupNo], pulsePos);
-// 						// convert command to ticks
-// 						Ros_CtrlGroup_ConvertToMotoPos(controller->ctrlGroups[groupNo], command->jointCommandData[groupNo].command, pulsePosCmd);
-// 						for (axisNo = 0; axisNo < controller->ctrlGroups[groupNo]->numAxes; axisNo++) {
-// 							// EXIT if deviation > START_MAX_PULSE_DEVIATION
-// 							if (abs(pulsePosCmd[axisNo] - pulsePos[axisNo]) > START_MAX_PULSE_DEVIATION) {
-// 								printf("[RT] ERROR. Deviation axis: %d POS: %ld - CMD_POS: %ld\n", axisNo, pulsePos[axisNo], pulsePosCmd[axisNo]);
-// 								goto exitTask;
-// 							}
-							
-// 						}
-
-// 						Db_Print("[RT] Deviation OK\n");
-// 					}
-// 					init_motion++;
-// 				}
-
-// 				// switch motion types - currently only position
-// 				switch (mode) {
-// 				case MOTO_REALTIME_MOTION_MODE_IDLE:
-// 					break;
-// 				case MOTO_REALTIME_MOTION_MODE_JOINT_POSITION:
-// 					for (groupNo = 0; groupNo < controller->numGroup; groupNo++) 
-// 					{
-// 						// Current position in pulses -> trust the robot instead
-// 						// Ros_CtrlGroup_GetFBPulsePos(controller->ctrlGroups[groupNo], pulsePos);
-						
-// 						// Convert command from rad to pulse
-// 						Ros_CtrlGroup_ConvertToMotoPos(controller->ctrlGroups[groupNo], command->jointCommandData[groupNo].command, pulsePosCmd);
-
-// 						for (axisNo = 0; axisNo < controller->ctrlGroups[groupNo]->numAxes; axisNo++)
-// 						{
-// 							pulseInc[axisNo] = pulsePosCmd[axisNo] - pulsePos[axisNo];
-
-
-// 							// set increment
-// 							moveData.grp_pos_info[groupNo].pos[axisNo] = pulseInc[axisNo];
-
-// 							// set previous (pulsePos) position
-// 							pulsePos[axisNo] = pulsePosCmd[axisNo]; //-> better set after actual increment ?
-// 						}
-// 					}
-// 					// print the deviation
-// 					printf("[RT] P: %ld %ld %ld %ld %ld %ld\n",
-// 						pulseInc[0], pulseInc[1], pulseInc[2], pulseInc[3], pulseInc[4], pulseInc[5]);
-
-// 					break;
-// 				case MOTO_REALTIME_MOTION_MODE_JOINT_VELOCITY:
-// 					//for (groupNo = 0; groupNo < controller->numGroup; groupNo++) 
-// 					//{
-// 					//	UINT8 axisNo;
-// 					//	for (axisNo = 0; axisNo < controller->ctrlGroups[groupNo]->numAxes; axisNo++) 
-// 					//	{
-// 					//		moveData.grp_pos_info[groupNo].pos[axisNo] = (LONG)(command->jointCommandData[groupNo].command[axisNo] / RAD_PER_DEGREE * controller->interpolPeriod * 10);
-// 					//	}
-// 					//}
-// 					break;
-// 				}
-// 			}
-// 			else 
-// 			{
-// 				// Stop motion if sequence numbers do not match #TODO!
-// 				for (groupNo = 0; groupNo < controller->numGroup; groupNo++) {
-// 					memset(&moveData.grp_pos_info[groupNo].pos, CLEAR,
-// 						sizeof(LONG) * MP_GRP_AXES_NUM);
-// 				}
-// 				Db_Print("[RT] STE: %d CMD: %d\n",
-// 					stateMsg.body.realTimeMotionJointStateEx.messageId, command->messageId);
-// 			}
-
-// 			// Move robot #TEST2
-// 			if (Ros_Controller_IsMotionReady(controller) && !controller->bStopMotion) {
-// 				int ret = mpExRcsIncrementMove(&moveData);
-// 				if (ret != 0) {
-// 					if (ret == -3) {
-// 						printf("[RT] mpExRcsIncrementMove returned: %d (ctrl_grp = % d)\r\n",
-// 							ret, moveData.ctrl_grp);
-// 					}
-// 					else {
-// 						printf("[RT] mpExRcsIncrementMove returned: %d\r\n", ret);
-// 					}
-// 				}
-// 				// normal end
-// 				else
-// 				{
-// 					for (groupNo = 0; groupNo < controller->numGroup; groupNo++)
-// 					{
-// 						// #TODO
-// 						// save current commanded pos to pulsePos. Does this work??
-// 						//memcpy(pulsePosTmp, pulsePos, MAX_PULSE_AXES * sizeof(long));
-// 						//Ros_CtrlGroup_GetPulsePosCmd(controller->ctrlGroups[groupNo], pulsePos);
-// 					}
-// 				}
-// 			}
-
-// 			// Increment sequence number
-// 			sequence++;
-// 			// Reset timeoutCounter
-// 			timeoutCounter = 0;
-// 		}
-// 		else {
-// 			// Increment timeout counter
-// 			timeoutCounter++;
-// 			printf("[RT] Socket read timeout. Counter at %u\n", timeoutCounter);
-// 		}
-
-
-// 		if (runCounter % 2500 == 0) printf("[RT] runCounter: %d\n", runCounter); // #TEST1
-// 		// Increment run counter
-// 		runCounter++;
-// 	}
-
-
-// exitTask:
-
-// 	// plot parameters on exit again
-// 	Ros_RealTimeMotionServer_PrintParams(controller);
-
-// 	// print prev pulses
-// 	Ros_RealTimeMotionServer_PrintPrevPos(controller);
-
-// 	// Stop servos
-// 	Ros_RealTimeMotionServer_StopTrajMode(controller);
-
-// 	puts("[RT] Deleting RealTimeMotion server inc 2 task");
-
-// 	// Close UDP socket
-// 	mpClose(udp_socket_fd);
-// 	// Delete this task
-// 	controller->tidIncMoveThread = INVALID_TASK;
-// 	mpDeleteSelf;
-// }
 
 
 
