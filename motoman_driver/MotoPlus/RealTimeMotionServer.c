@@ -476,9 +476,69 @@ static struct fd_set readFds;					// struct for handling socket file descriptor 
 static int udp_socket_fd;						// UDP server socket
 static RtMsg rtMsgRecv, rtMsgSend;				// Message variable
 
-// Maximum values
-static float MAX_INC_FACTOR;	// #TODO set dynamically?
-static float MAX_ACC_FACTOR;	// max_acc = 2*max_inc
+#define MAX_INC_FALLBACK 0.1
+#define MAX_ACC_FALLBACK 0.01
+
+// Message queue
+typedef struct
+{
+	#define MSG_CODE_QUEUE_SIZE 100
+	enum RtMsgCode code[MSG_CODE_QUEUE_SIZE];
+	int counter;
+} MsgCodeQueue;
+
+static MsgCodeQueue msgCodeQueue;
+
+// Add fail codes to the message code queue
+void _add_msg_code_queue(enum RtMsgCode code)
+{
+	if(msgCodeQueue.counter < MSG_CODE_QUEUE_SIZE)
+	{
+		msgCodeQueue.code[msgCodeQueue.counter] = code;
+		msgCodeQueue.counter++;
+	}
+	else { Db_Print("[RT] _add_msg_code_queue: QUEUE FULL\n"); }
+}
+
+// Get code from message code queue and set to RtMsg header code
+void _get_next_msg_code_queue(enum RtMsgCode * msg_code)
+{
+	if(msgCodeQueue.counter > 0)
+	{
+		msgCodeQueue.counter -= 1;
+		(*msg_code) = msgCodeQueue.code[msgCodeQueue.counter];
+	}
+	else
+	{
+		(*msg_code) = CODE_UNDEFINED;
+	}
+}
+
+// Get motion limits (increments) from UDP message
+void _get_motion_limits(RtMsg * msg, UINT8 grpNo, float * INC_MAX, float * ACC_MAX)
+{
+	// Check and set inc limit
+	if(msg->body.command[grpNo].INC_FACTOR > 0. && msg->body.command[grpNo].INC_FACTOR <= 1.)
+	{
+		(*INC_MAX) = msg->body.command[grpNo].INC_FACTOR;
+	}
+	else
+	{
+		(*INC_MAX) = MAX_INC_FALLBACK;
+		_add_msg_code_queue(CODE_MAX_INC_ERROR);
+	}
+
+	// Check and set acc limit
+	if(msg->body.command[grpNo].ACC_FACTOR > 0. && msg->body.command[grpNo].ACC_FACTOR <= 1.)
+	{
+		(*ACC_MAX) = msg->body.command[grpNo].ACC_FACTOR;
+	}
+	else
+	{
+		(*ACC_MAX) = MAX_ACC_FALLBACK;
+		_add_msg_code_queue(CODE_MAX_ACC_ERROR);
+	}
+}
 
 // Test variables
 static float sw_current;
@@ -548,7 +608,7 @@ static BOOL _Ros_RealTimeMotionServer_GetUdpMsg()
 }
 
 static BOOL _Ros_RealTimeMotionServer_SetStateMsg(Controller* controller, 
-	const enum RtMsgState *msg_state, const enum RtMsgCode *msg_code, const unsigned char *sequence )
+	const enum RtMsgState *msg_state, const unsigned char *sequence )
 {
 	static long _pulse_values[MAX_PULSE_AXES];
 
@@ -557,7 +617,7 @@ static BOOL _Ros_RealTimeMotionServer_SetStateMsg(Controller* controller,
 
 	// set header
 	rtMsgSend.header.msg_state = *msg_state;
-	rtMsgSend.header.msg_code = *msg_code;
+	_get_next_msg_code_queue(&rtMsgSend.header.msg_code);
 	rtMsgSend.header.msg_sequence = *sequence;
 	//rtMsgSend.header.msg_
 
@@ -631,10 +691,6 @@ static BOOL _Ros_RealTimeMotionServer_SetStateMsg(Controller* controller,
 		
 		// ------------------ ACCELERATION ------------------
 		
-		// // Send commanded acceleration -> this would be the commanded acceleration by the synchronisation algorithm, 
-		// // one step before the other pos / vel cmd values above.
-		// Ros_CtrlGroup_ConvertToRosPos(controller->ctrlGroups[groupNo], _mDataLog.prevAccCmd, rtMsgSend.body.state[groupNo].acc_cmd);
-
 		// Commanded acceleration
 		Ros_CtrlGroup_ConvertToRosPos(controller->ctrlGroups[groupNo], _mDataLog.prevAccCmd, rtMsgSend.body.state[groupNo].acc_cmd);
 
@@ -666,6 +722,10 @@ static UINT8 _Ros_RealTimeMotionServer_SetMotion(Controller* controller, enum Ro
 {
 	const UINT8 groupNo = 0;	// Only for 1 controller group for now
 
+	// Maximum values
+	static float MAX_INC_FACTOR = MAX_INC_FALLBACK, MAX_INC_FACTOR_PREV = MAX_INC_FALLBACK;
+	static float MAX_ACC_FACTOR = MAX_ACC_FALLBACK, MAX_ACC_FACTOR_PREV = MAX_ACC_FALLBACK;
+
 	// Local move data variables
 	static long posCmd[RT_ROBOT_JOINTS_MAX];
 	static long _pos_cmd = 0;
@@ -685,9 +745,24 @@ static UINT8 _Ros_RealTimeMotionServer_SetMotion(Controller* controller, enum Ro
 	
 	// ------------------ SET COMMAND INCREMENT ------------------
 
-	// Convert command [RAD] values to [PULSE]
-	Ros_CtrlGroup_ConvertToMotoPos(controller->ctrlGroups[groupNo], rtMsgRecv.body.command[groupNo].pos, posCmd);
-	
+	if(motionType == RT_MOTION_SYNC)
+	{	
+		// Convert command [RAD] values to [PULSE]
+		Ros_CtrlGroup_ConvertToMotoPos(controller->ctrlGroups[groupNo], rtMsgRecv.body.command[groupNo].pos, posCmd);
+		
+		// Get new motion limits
+		_get_motion_limits(&rtMsgRecv, groupNo, &MAX_INC_FACTOR, &MAX_ACC_FACTOR);
+		if(MAX_INC_FACTOR != MAX_INC_FACTOR_PREV)
+		{
+			Db_Print("[RT] set MAX_INC_FACTOR: %f\n", MAX_INC_FACTOR);
+			MAX_INC_FACTOR_PREV = MAX_INC_FACTOR;
+		}
+		if(MAX_ACC_FACTOR != MAX_ACC_FACTOR_PREV)
+		{
+			Db_Print("[RT] set MAX_ACC_FACTOR: %f\n", MAX_ACC_FACTOR);
+			MAX_ACC_FACTOR_PREV = MAX_ACC_FACTOR;
+		}
+	}
 
 	// ------------------ CALCULATE MOTION ------------------
 	
@@ -858,10 +933,10 @@ static UINT8 _Ros_RealTimeMotionServer_SetMotion(Controller* controller, enum Ro
 		// --------- Set robot increment ---------
 
 		// Set increment to actual robot move variable
-		if(axisNo == 5) // TEST #TODO REMOVE
-		{
-			incData.grp_pos_info[groupNo].pos[axisNo] = _inc_set;
-		}
+		//if(axisNo == 5) // TEST #TODO REMOVE
+		//{
+		incData.grp_pos_info[groupNo].pos[axisNo] = _inc_set;
+		//}
 
 		// --------- Set previous values ---------
 		mData.prevPosCmd[axisNo] = _pos_cmd;
@@ -975,7 +1050,7 @@ static void Ros_RealTimeMotionServer_IncMoveLoopStart(Controller* controller)
 	// Declare scoped static variables
 	//static int i;
 	static bool msgReceived;							// Received message from host
-	static enum RtMsgCode msgCode = CODE_UNDEFINED;		// Message code sent to host
+	//static enum RtMsgCode msgCode = CODE_UNDEFINED;		// Message code sent to host
 	static unsigned short timeoutCounter = 0;			// Missed messages
 	static unsigned char sequence = 0;					// Current message sequence
 	static enum Ros_RealTimeMotionServer_Motion_t motionRet = RT_MOTION_UNDEFINED;
@@ -996,11 +1071,14 @@ static void Ros_RealTimeMotionServer_IncMoveLoopStart(Controller* controller)
 	
 
 	
-	// Clear move data struct
+	// Clear data structures
 	for (groupNo = 0; groupNo < controller->numGroup; groupNo++)
 	{
 		memset(&mData, 0, sizeof(MoveData));
 		memset(&_mDataLog, 0, sizeof(MoveData));	// #TODO remove
+
+		// Clear msg code queue
+		memset(&msgCodeQueue, 0, sizeof(MsgCodeQueue));	
 	}
 
 	// Set movedata
@@ -1064,10 +1142,6 @@ static void Ros_RealTimeMotionServer_IncMoveLoopStart(Controller* controller)
 	
 	// ------------------ START CONTROLLER ------------------
 
-	// Set maximum values hardcoded #TODO
-	MAX_INC_FACTOR = 0.5;
-	MAX_ACC_FACTOR = 0.05;
-
 	// Ensure that the motion is not stopped on the controller
 	controller->bStopMotion = FALSE;
 	
@@ -1104,7 +1178,7 @@ static void Ros_RealTimeMotionServer_IncMoveLoopStart(Controller* controller)
 	readTimeout.tv_usec = REALTIME_MOTION_TIMEOUT_MS * 1000;
 
 	// Send initial message
-	_Ros_RealTimeMotionServer_SetStateMsg(controller, &rtState, &msgCode, &sequence);
+	_Ros_RealTimeMotionServer_SetStateMsg(controller, &rtState, &sequence);
 	_Ros_RealTimeMotionServer_SendUdpMsg();
 
 	// Set idle state
@@ -1150,7 +1224,7 @@ static void Ros_RealTimeMotionServer_IncMoveLoopStart(Controller* controller)
 
 
 		// reset message code
-		msgCode = CODE_UNDEFINED;
+		// msgCode = CODE_UNDEFINED;
 
 		// --------- switch state machine ---------
 		switch (rtState)
@@ -1341,7 +1415,7 @@ static void Ros_RealTimeMotionServer_IncMoveLoopStart(Controller* controller)
 		_update_log_msg_data();
 
 		sequence++;
-		_Ros_RealTimeMotionServer_SetStateMsg(controller, &rtState, &msgCode, &sequence);
+		_Ros_RealTimeMotionServer_SetStateMsg(controller, &rtState, &sequence);
 		_Ros_RealTimeMotionServer_SendUdpMsg();
 
 
@@ -1443,7 +1517,7 @@ BOOL Ros_RealTimeMotionServer_StartTrajMode(Controller* controller)
 	STATUS status;
 
 	
-	Db_Print("[RT] In StartTrajMode\r\n");
+	Db_Print("[RT] Attempting controller start ...\r\n");
 
 	// Update status
 	Ros_Controller_StatusUpdate(controller);
