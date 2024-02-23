@@ -1,3 +1,6 @@
+# DEPRECATED
+This is no longer supported, please consider using [motoman_ROS2](https://github.com/adv4ncr/motoman_ROS2) instead.
+---
 # Motoman
 
 [![Build Status: Ubuntu Xenial (Actions)](https://github.com/ros-industrial/motoman/workflows/CI%20-%20Ubuntu%20Xenial/badge.svg?branch=kinetic-devel)](https://github.com/ros-industrial/motoman/actions?query=workflow%3A%22CI+-+Ubuntu+Xenial%22)
